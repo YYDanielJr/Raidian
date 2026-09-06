@@ -27,30 +27,55 @@ import yy.daniel.raidian.monitor.Sample
  * [InfoRow] 是"标签:值"型信息行,放在详情信息卡里。
  */
 
-/** 实时数据九宫格:三行 × 每行三项数值(负值/无效显示 "--") */
+/** 实时数据九宫格:按可用宽度自适应列数(3~6 列),负值/无效显示 "--" */
 @Composable
 fun SampleGrid(s: Sample) {
     fun fmt(v: Float, unit: String): String =
         if (v < 0) "--" else String.format("%.0f%s", v, unit)
 
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        DataCell("FPS", if (s.fps >= 0f) String.format("%.1f", s.fps) else "--", Modifier.weight(1f))
-        DataCell("CPU占用", fmt(s.cpuLoad, "%"), Modifier.weight(1f))
-        DataCell("GPU占用", fmt(s.gpuLoad, "%"), Modifier.weight(1f))
-    }
-    Spacer(Modifier.height(10.dp))
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        DataCell("CPU频率", if (s.cpuB > 0) "${s.cpuB}MHz" else "--", Modifier.weight(1f))
-        DataCell("GPU频率", if (s.gpuFreq > 0) "${s.gpuFreq}MHz" else "--", Modifier.weight(1f))
-        DataCell("功耗", if (s.powerMw > 0) {
+    // 9 个单元:标签 → 值
+    val cells: List<Pair<String, String>> = listOf(
+        "FPS" to (if (s.fps >= 0f) String.format("%.1f", s.fps) else "--"),
+        "CPU占用" to fmt(s.cpuLoad, "%"),
+        "GPU占用" to fmt(s.gpuLoad, "%"),
+        "CPU频率" to (if (s.cpuB > 0) "${s.cpuB}MHz" else "--"),
+        "GPU频率" to (if (s.gpuFreq > 0) "${s.gpuFreq}MHz" else "--"),
+        "功耗" to (if (s.powerMw > 0) {
             if (s.powerMw > 1000) String.format("%.1fW", s.powerMw / 1000f) else "${s.powerMw}mW"
-        } else "--", Modifier.weight(1f))
-    }
-    Spacer(Modifier.height(10.dp))
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        DataCell("电池温度", if (s.batteryTemp > 0) String.format("%.1f°C", s.batteryTemp) else "--", Modifier.weight(1f))
-        DataCell("核心温度", if (s.maxSocTemp > 0) String.format("%.1f°C", s.maxSocTemp) else "--", Modifier.weight(1f))
-        DataCell("内存", if (s.usedMemMb > 0) "${s.usedMemMb}MB" else "--", Modifier.weight(1f))
+        } else "--"),
+        "电池温度" to (if (s.batteryTemp > 0) String.format("%.1f°C", s.batteryTemp) else "--"),
+        "核心温度" to (if (s.maxSocTemp > 0) String.format("%.1f°C", s.maxSocTemp) else "--"),
+        "内存" to (if (s.usedMemMb > 0) "${s.usedMemMb}MB" else "--"),
+    )
+
+    // 自适应列数:可用宽度越大列数越多(平板/并排时信息密度高)。
+    // BoxWithConstraints 只用于读取可用宽度(maxWidth);内容必须用 Column
+    // 垂直排列 —— Box 的 content 是 BoxScope,直接放多个 Row 会相互重叠!
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        val maxW = maxWidth
+        val columns = when {
+            maxW < 240.dp -> 2
+            maxW < 420.dp -> 3
+            maxW < 560.dp -> 4
+            else -> 6
+        }
+        // 每行 columns 个,不足一行也整行铺开(weight 均分)
+        val rows = cells.chunked(columns)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            rows.forEachIndexed { ri, rowCells ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    rowCells.forEach { (label, value) ->
+                        DataCell(label, value, Modifier.weight(1f))
+                    }
+                }
+                if (ri < rows.size - 1) Spacer(Modifier.height(10.dp))
+            }
+        }
     }
 }
 

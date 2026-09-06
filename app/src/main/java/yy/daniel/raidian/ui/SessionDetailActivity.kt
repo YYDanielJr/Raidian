@@ -78,7 +78,7 @@ private fun SessionDetailScreen(
         title = "会话详情",
         onBack = { (context.findActivity())?.finish() },
         content = { padding ->
-            SessionDetailPage(
+            SessionDetailContent(
                 detail = detail,
                 modifier = Modifier
                     .fillMaxSize()
@@ -96,14 +96,18 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
         else -> null
     }
 
-// ==================== 会话详情页 ====================
+// ==================== 会话详情内容(可复用) ====================
 
 /**
  * 会话详情内容:元数据信息卡(时间/时长/帧率统计/均值)+ 四条曲线
- * (帧率/功耗/电池温度/核心温度)。数据来自 vm.sessionDetail(openSession 加载)。
+ * (帧率/功耗/电池温度/核心温度)。数据来自 detail(openSession 加载)。
+ *
+ * 供两处使用:
+ *  - SessionDetailActivity(手机点列表行跳转的全屏详情)
+ *  - RecordsScreen 平板主从布局的右侧详情栏
  */
 @Composable
-private fun SessionDetailPage(
+fun SessionDetailContent(
     detail: MainViewModel.SessionDetail?,
     modifier: Modifier = Modifier,
 ) {

@@ -37,9 +37,12 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.NavigationRail
+import top.yukonga.miuix.kmp.basic.NavigationRailItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.basic.rememberNavigationRailState
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.AppRecording
@@ -73,6 +76,8 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
         canScroll = { true }
     )
 
+    val tablet = isTablet()
+
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -84,16 +89,19 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
                 largeTitleColor = MiuixTheme.colorScheme.onSurface,
                 subtitleColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 actions = {
-                    TopBarEntry(
-                        icon = { Icon(MiuixIcons.ListView, contentDescription = null, tint = MiuixTheme.colorScheme.onSurface) },
-                        label = "记录",
-                        onClick = { context.startActivity(Intent(context, RecordsActivity::class.java)) },
-                    )
-                    TopBarEntry(
-                        icon = { Icon(MiuixIcons.Settings, contentDescription = null, tint = MiuixTheme.colorScheme.onSurface) },
-                        label = "设置",
-                        onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
-                    )
+                    // 平板:入口在左侧导航栏,顶栏不再重复放按钮(只保留少量空间)
+                    if (!tablet) {
+                        TopBarEntry(
+                            icon = { Icon(MiuixIcons.ListView, contentDescription = null, tint = MiuixTheme.colorScheme.onSurface) },
+                            label = "记录",
+                            onClick = { context.startActivity(Intent(context, RecordsActivity::class.java)) },
+                        )
+                        TopBarEntry(
+                            icon = { Icon(MiuixIcons.Settings, contentDescription = null, tint = MiuixTheme.colorScheme.onSurface) },
+                            label = "设置",
+                            onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
+                        )
+                    }
                 },
                 titlePadding = 24.dp,
                 navigationIconPadding = 12.dp,
@@ -107,13 +115,41 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
                 .fillMaxSize()
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
         ) {
-            LivePage(
-                vm = vm,
-                canOverlay = canOverlay,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            )
+            if (tablet) {
+                // 平板:左侧 NavigationRail 常驻导航(记录/设置),右侧实时内容
+                Row(modifier = Modifier.fillMaxSize().padding(padding)) {
+                    val railState = rememberNavigationRailState()
+                    NavigationRail(state = railState) {
+                        NavigationRailItem(
+                            selected = false,
+                            onClick = { context.startActivity(Intent(context, RecordsActivity::class.java)) },
+                            icon = MiuixIcons.ListView,
+                            label = "记录",
+                        )
+                        NavigationRailItem(
+                            selected = false,
+                            onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
+                            icon = MiuixIcons.Settings,
+                            label = "设置",
+                        )
+                    }
+                    LivePage(
+                        vm = vm,
+                        canOverlay = canOverlay,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize(),
+                    )
+                }
+            } else {
+                LivePage(
+                    vm = vm,
+                    canOverlay = canOverlay,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                )
+            }
         }
     }
 }
@@ -247,45 +283,38 @@ private fun LivePage(
             )
             val cpuFreqCur = listOf(last.cpuL.toFloat(), last.cpuM.toFloat(), last.cpuB.toFloat())
 
-            // 依次画启用项
-            LiveChartPrefs.ALL.forEach { item ->
-                if (!LiveChartPrefs.isOn(context, item.key)) return@forEach
-                if (item.key == "cpu_freq") {
-                    // 三簇三线(颜色分别为 L/M/B 的配置)
-                    val colors = (0 until 3).map { si -> LiveChartPrefs.seriesColor(context, item.key, si) }
-                    val hasAny = multiCpuFreq.any { line -> line.any { it != null } }
-                    if (hasAny) {
-                        MultiSeriesRow(
-                            label = item.label,
-                            unit = "MHz",
-                            series = multiCpuFreq,
-                            curValues = cpuFreqCur,
-                            colors = colors,
-                            minY = 0f,
-                            maxY = null,
-                            seriesLabels = listOf("小核", "中核", "大核"),
-                            xLabels = timeX,
-                        )
-                    } else {
-                        NoDataRow(item.label)
+            // 依次画启用项:手机单列;平板单值项两两并排(多线项整宽)
+            val enabledItems = LiveChartPrefs.ALL.filter { LiveChartPrefs.isOn(context, it.key) }
+            if (tablet) {
+                // 多线项(CPU 频率)整宽放最前
+                enabledItems.filter { it.key == "cpu_freq" }.forEach { item ->
+                    LiveMultiChart(
+                        item = item, multiCpuFreq = multiCpuFreq, cpuFreqCur = cpuFreqCur,
+                        timeX = timeX, context = context,
+                    )
+                }
+                // 单值项:两两一组并排
+                val singles = enabledItems.filter { it.key != "cpu_freq" }
+                singles.chunked(2).forEach { pair ->
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        pair.forEach { item ->
+                            androidx.compose.foundation.layout.Box(modifier = Modifier.weight(1f)) {
+                                LiveSingleChart(item = item, single = single, timeX = timeX, context = context)
+                            }
+                        }
+                        // 补空位保持对齐
+                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
-                } else {
-                    val (values, current, unit) = single[item.key] ?: return@forEach
-                    val hasData = values.any { it != null }
-                    if (!hasData) {
-                        NoDataRow(item.label)
-                        Spacer(Modifier.height(8.dp))
-                        return@forEach
-                    }
-                    val color = LiveChartPrefs.color(context, item.key)
-                    val (minY, maxY) = when (item.key) {
-                        "fps" -> 0f to 120f
-                        "gpu_load" -> 0f to 100f
-                        "cpu_load" -> 0f to 100f
-                        else -> null to null
-                    }
-                    ChartRow(item.label, unit, values, current, minY, maxY, color)
                     Spacer(Modifier.height(8.dp))
+                }
+            } else {
+                enabledItems.forEach { item ->
+                    if (item.key == "cpu_freq") {
+                        LiveMultiChart(item, multiCpuFreq, cpuFreqCur, timeX, context)
+                    } else {
+                        LiveSingleChart(item, single, timeX, context)
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
             }
         }
@@ -441,6 +470,68 @@ private fun DeviceEnvCard() {
                 "Android ${android.os.Build.VERSION.RELEASE}"
             }
         )
+    }
+}
+
+/**
+ * 实时曲线 · 单值指标行(帧率/占用/功耗/温度/内存等)。
+ * 内部按是否有数据决定画 [ChartRow] 还是 [NoDataRow]。
+ */
+@Composable
+private fun LiveSingleChart(
+    item: LiveChartPrefs.ChartItem,
+    single: Map<String, Triple<List<Float?>, Float, String>>,
+    timeX: List<String>?,
+    context: android.content.Context,
+) {
+    val entry = single[item.key]
+    if (entry == null) {
+        NoDataRow(item.label)
+        return
+    }
+    val (values, current, unit) = entry
+    if (!values.any { it != null }) {
+        NoDataRow(item.label)
+        return
+    }
+    val color = LiveChartPrefs.color(context, item.key)
+    val (minY, maxY) = when (item.key) {
+        "fps" -> 0f to 120f
+        "gpu_load" -> 0f to 100f
+        "cpu_load" -> 0f to 100f
+        else -> null to null
+    }
+    ChartRow(item.label, unit, values, current, minY, maxY, color)
+}
+
+/**
+ * 实时曲线 · 多线指标(CPU 频率三簇小/中/大核),整宽展示。
+ */
+@Composable
+private fun LiveMultiChart(
+    item: LiveChartPrefs.ChartItem,
+    multiCpuFreq: List<List<Float?>>,
+    cpuFreqCur: List<Float>,
+    timeX: List<String>?,
+    context: android.content.Context,
+) {
+    val colors = (0 until 3).map { si -> LiveChartPrefs.seriesColor(context, item.key, si) }
+    val hasAny = multiCpuFreq.any { line -> line.any { it != null } }
+    if (hasAny) {
+        MultiSeriesRow(
+            label = item.label,
+            unit = "MHz",
+            series = multiCpuFreq,
+            curValues = cpuFreqCur,
+            colors = colors,
+            minY = 0f,
+            maxY = null,
+            seriesLabels = listOf("小核", "中核", "大核"),
+            xLabels = timeX,
+        )
+        Spacer(Modifier.height(8.dp))
+    } else {
+        NoDataRow(item.label)
     }
 }
 
