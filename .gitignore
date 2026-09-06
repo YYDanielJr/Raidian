@@ -1,0 +1,24 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+/.kotlin
+/build
+/**/build
+/app/release
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Raidian 项目内构建缓存(沙箱重定向)
+/.gradle-home
+/.gradle-dists
+/.gradle
+
+# 截图与临时参考(非源码)
+/_shots
+/_ui-ref
+
+# 开源参考仓库(各自带 .git,可独立 git pull,不入本库)
+/references

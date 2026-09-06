@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Shizuku 提权通道(经 adb 或 Shizuku 应用授予) -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- 悬浮窗 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 前台服务:监控与悬浮窗 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 读取设备应用列表(应用选择页需要;小米 ROM 有独立"后台读取应用列表"开关) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!-- 列出设备应用需要:声明对带桌面启动入口应用的包可见性(Android 11+ 包可见性) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".RaidianApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Raidian">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Raidian"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 设置向导:首次启动进入(见 MainActivity);也可在设置页二次打开 -->
+        <activity
+            android:name=".SetupWizardActivity"
+            android:exported="false"
+            android:label="设置向导"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 记录页:主页顶栏"记录"按钮进入(会话历史 + 详情) -->
+        <activity
+            android:name=".ui.RecordsActivity"
+            android:exported="false"
+            android:label="历史记录数据"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 会话详情页:记录页点击某条会话时以新 Activity 打开(触发转场动画) -->
+        <activity
+            android:name=".ui.SessionDetailActivity"
+            android:exported="false"
+            android:label="会话详情"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 记录目标选择页:主页"会话记录"卡点记录目标进入 -->
+        <activity
+            android:name=".ui.AppPickActivity"
+            android:exported="false"
+            android:label="选择记录目标"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 设置页(实时曲线/悬浮窗配置):主页顶栏"设置"按钮进入 -->
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="false"
+            android:label="设置"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- Shizuku binder 连接桥(必须,否则 app 无法发现 Shizuku 服务) -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <service
+            android:name=".monitor.MonitorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="performance_monitor_recording" />
+        </service>
+    </application>
+
+</manifest>
