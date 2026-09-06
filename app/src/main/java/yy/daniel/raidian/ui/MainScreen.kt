@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -173,6 +174,22 @@ private fun LivePage(
                     context.startActivity(intent)
                 }
             )
+        }
+
+        // 设备环境:识别出的 ROM 家族 / 型号 / 采集适配方式(见 DeviceProfile)
+        val profile = remember { yy.daniel.raidian.monitor.DeviceProfile.detect() }
+        SectionHeader("设备环境")
+        HyperCard {
+            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                InfoRow("系统", profile.rom.label)
+                InfoRow("机型", profile.model.ifBlank { profile.brand })
+                InfoRow("簇探测", profile.clusterProbe.label)
+                InfoRow(
+                    "版本", profile.romVersion.ifBlank {
+                        "Android ${android.os.Build.VERSION.RELEASE}"
+                    }
+                )
+            }
         }
 
         // 实时数据卡片(九宫格数值)

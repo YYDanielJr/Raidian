@@ -46,6 +46,9 @@ class RaidianApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // 0) 设备/系统画像识别(采样层按此分派探测策略),先记录便于排查
+        val profile = yy.daniel.raidian.monitor.DeviceProfile.detect()
+        android.util.Log.i("RaidianEnv", "device profile: $profile")
         // 1) Shizuku 通道(注册监听并刷新授权状态)
         shizuku = ShizukuShell(this)
         shizuku.init()

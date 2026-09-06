@@ -27,7 +27,7 @@ class MonitorSampler(
     private val exec: CommandExecutor,
     private val appState: AppStateReader,
 ) {
-    // CPU 簇映射缓存:每个逻辑核 -> 簇编号(0 小核起,见 buildClusterMap)
+    // CPU 簇档映射缓存:每个逻辑核 -> 档位 0/1/2(0=小 1=中 2=大,见 buildClusterMap)
     private var clusterMap: List<Int>? = null
 
     // 上一个采样点的 CPU jiffies(总 / 空闲)与时间戳,用于算两次之间的占用率
@@ -91,7 +91,10 @@ class MonitorSampler(
     private suspend fun readMerged(): MergedRead {
         val cm = clusterMap ?: buildClusterMap().also { clusterMap = it }
         val nCores = cm.size
-        // 每簇代表核(该簇第一个逻辑核),用于 L/M/B 三簇显示
+        // 每档位代表核(该档第一个逻辑核),用于 L/M/B 三档显示。
+        // 档位 0/1/2 = 小/中/大(见 buildClusterMap):簇数 <3 的设备(如 2 簇)
+        // 后置档位无代表核,对应 freqs 保持 -1,UI 显示 "--"。簇数 >3 的未知
+        // 设备沿用旧语义只显示前三档。
         val clusterReps = cm.distinct().sorted().map { cl -> cl to cm.indexOfFirst { it == cl } }
         val sb = StringBuilder()
         clusterReps.forEach { (cl, core) ->
@@ -202,15 +205,59 @@ class MonitorSampler(
     // CPU 读取已并入 readMerged()(CPU 频率/负载/内存/网络一次 shell 完成)
 
     /**
-     * 构建"逻辑核 → 簇"映射(CPU 频率读取已并入 readMerged,此处仅初始化映射)。
+     * 构建"逻辑核 → 簇档位"映射,返回列表长度 = 实际核数,下标即逻辑核号,
+     * 值为档位 0(小)/1(中)/2(大)。
      *
-     * 修正:不用 Runtime.availableProcessors()(可能因离线核偏小,实机返回 6
+     * 按 [DeviceProfile.clusterProbe] 分派(厂商/SoC 差异的核心落点):
+     *  - [DeviceProfile.ClusterProbe.CAPACITY_8GEN3]:骁龙 8 Gen 3(ColorOS 一加平板 Pro
+     *    实测)是 **4 簇 + 中核双 bin**,频率表每簇各不相同(cpu2-4 与 cpu5-6 两张中核表),
+     *    按"频率表相同"聚类会得到 4 簇、把真正的大核(cpu7)挤出前 3 → L/M/B 错位。
+     *    改按 `/sys/devices/system/cpu/cpuN/cpu_capacity` 归簇(同簇同容量),再按容量
+     *    升序把 4 簇折成 3 档:最低=小、最高=大、中间全部=中(多簇取其中一簇,不影响
+     *    档位语义——逐核 perCore 曲线仍按核号独立记录)。
+     *  - 其它(HyperOS 小米 13 Ultra 等):按"共享同一组 scaling_available_frequencies"
+     *    聚类,天然 3 簇且顺序即小中大(旧行为,已实机验证)。
+     *
+     * 修正(继承旧代码):不用 Runtime.availableProcessors()(可能因离线核偏小,实机返回 6
      * 但实际有 cpu0..cpu7),而是遍历 /sys/devices/system/cpu/cpu* 目录探测最大核号。
-     * 返回的列表长度 = 实际核数,下标即逻辑核号;每核的簇编号由"共享同一组
-     * scaling_available_frequencies"判定(cpu0-2 小 / cpu3-6 中 / cpu7 大)。
      */
     private suspend fun buildClusterMap(): List<Int> {
         val n = probeCoreCount()
+        return when (DeviceProfile.detect().clusterProbe) {
+            DeviceProfile.ClusterProbe.CAPACITY_8GEN3 -> buildByCapacity(n)
+            else -> buildByFreqTable(n)
+        }
+    }
+
+    /** 骁龙 8 Gen 3 / 4 簇中核双 bin:按 cpu_capacity 归簇折 3 档 */
+    private suspend fun buildByCapacity(n: Int): List<Int> {
+        // 1) 逐核读 capacity;读不到(个别核离线/路径拒)的核先按 0 处理,末尾回退
+        val caps = IntArray(n) { -1 }
+        for (core in 0 until n) {
+            val line = exec.readFile("/sys/devices/system/cpu/cpu$core/cpu_capacity")
+            caps[core] = line.trim().toIntOrNull() ?: -1
+        }
+        // 2) 有效容量按升序取"簇代表值"(去重),得到实际簇数 k
+        val distinct = caps.filter { it > 0 }.distinct().sorted()
+        if (distinct.isEmpty()) {
+            // capacity 全读不到(极端):退频率表聚类
+            return buildByFreqTable(n)
+        }
+        // 3) 折成 3 档:下标 0 = 最小容量(小核),最后 = 最大容量(大核),
+        //    中间若干簇(8 Gen 3 有 2 个中核 bin)全部折成档位 1(中)
+        val minCap = distinct.first()
+        val maxCap = distinct.last()
+        return List(n) { core ->
+            when (caps[core]) {
+                minCap -> 0          // 小核
+                maxCap -> 2          // 大核
+                else -> if (caps[core] > 0) 1 else 0 // 中核;读不到的核并入小核(占位)
+            }
+        }
+    }
+
+    /** 小米等传统 3 簇(每簇一张频率表):按频率表相同聚类,簇序天然小中大 */
+    private suspend fun buildByFreqTable(n: Int): List<Int> {
         val map = MutableList(n) { 0 }
         val seen = mutableListOf<List<Long>>()
         for (core in 0 until n) {
@@ -362,13 +409,81 @@ class MonitorSampler(
     }
 
     // ---- 温度 ----
-    /** 热区一次读取结果 */
+    /** 热区一次读取结果(maxCpu=CPU类最高 / maxSoc=芯片非CPU区最高 / maxOther=外壳及其它) */
     private data class TempRead(val maxCpu: Float, val maxSoc: Float, val maxOther: Float)
 
-    // 温度读取:提权进程内 File 直接遍历(毫秒级),无 shell 子进程开销
+    /**
+     * 读温度。按 [DeviceProfile] 分派:
+     *  - **ColorOS/OPPO 系优先 `dumpsys thermalservice`**:实测(一加平板 Pro, ColorOS
+     *    16)输出 AOSP 标准 `Temperature{mValue=.., mType=.., mName=..}` 块,已带类型码
+     *    (0=CPU 1=GPU 2=BATTERY 3=SKIN 9=NPU 8=socd)与 ℃ 单位,跨厂商无需逐 zone 名
+     *    映射,还能拿到 GPU/NPU 温度。参考 FrameX ThermalServiceParser 的解析。
+     *    失败(权限/命令超时/无数据)时退回 sysfs 遍历。
+     *  - **HyperOS/其它走 sysfs 兜底**(CommandExecutor.readThermalZones,提权进程内
+     *    JVM File 遍历,毫秒级),并扩展分类:ColorOS 的 zone 名(cpu-X-Y-Z/cpuss 归
+     *    cpu;nsph/ mdmss/socd/ddr/video/gpuss 前缀归 soc;shell/ skin/batt 归 other)。
+     *
+     * 分类语义(UI 悬浮窗/CSV 消费):
+     *  - maxCpuTemp  = CPU 类最高温
+     *  - maxSocTemp  = "芯温":芯片上非 CPU 区最高(GPU/NPU/socd 等)
+     *  - maxOtherTemp= 外壳/外设/未分类最高
+     */
     private suspend fun readTemps(): TempRead {
+        val profile = DeviceProfile.detect()
+        // ColorOS 优先 thermalservice(标准化 HAL 温度,实测含每核 CPU/GPU/NPU/skin)
+        if (profile.isColorOs) {
+            val hal = readThermalHal()
+            if (hal != null) return hal
+            // HAL 不可用 → 落 sysfs(下方统一走,但 ColorOS zone 名不同,走扩展分类)
+        }
+        return readTempsSysfs()
+    }
+
+    /** 解析 `dumpsys thermalservice` 输出(参考 FrameX ThermalServiceParser) */
+    private suspend fun readThermalHal(): TempRead? {
+        val dump = try { exec.execute("dumpsys thermalservice 2>/dev/null") } catch (e: Exception) { return null }
+        if (dump.isBlank() || !dump.contains("Temperature{")) return null
+        // 只取 "Cached temperatures:" 之后的 Temperature{...} 块(避免 HAL 关闭时的空壳)
+        val body = if (dump.contains("Cached temperatures:"))
+            dump.substringAfter("Cached temperatures:") else dump
+
+        var maxCpu = -1f; var maxSoc = -1f; var maxOther = -1f
+        val block = Regex("""Temperature\{([^}]*)\}""")
+        for (m in block.findAll(body)) {
+            val s = m.groupValues[1]
+            val vRaw = Regex("""mValue\s*=\s*(-?[0-9.]+)""").find(s)?.groupValues?.get(1)?.toFloatOrNull() ?: continue
+            val type = Regex("""mType\s*=\s*(\d+)""").find(s)?.groupValues?.get(1)?.toIntOrNull()
+            val name = Regex("""mName\s*=\s*([^,\s}]+)""").find(s)?.groupValues?.get(1).orEmpty().uppercase()
+            // mValue 是 ℃(实测 CPU0=79.0);个别 OEM 可能给 m°C/0.1°C → 用 FrameX 式启发归一
+            val c = if (kotlin.math.abs(vRaw) > 200f) vRaw / 1000f else vRaw
+            if (c !in 0f..150f) continue // 过滤未接入的非法值
+            val kind = when {
+                // AOSP 类型码优先(0=CPU 1=GPU 2=BATTERY 3=SKIN 8=socd 9=NPU)
+                type == 0 || (type == null && (name.contains("CPU") || name.contains("CLUSTER") || name.contains("CPUSS"))) -> "cpu"
+                type == 1 || name.contains("GPU") -> "soc"        // GPU 归"芯片非CPU"
+                type == 9 || name.contains("NPU") || name.contains("NSP") -> "soc"
+                type == 8 || name.contains("SOCD") || name.contains("IBAT") || name.contains("VBAT") -> "soc"
+                type == 3 || name.contains("SKIN") || name.contains("SHELL") || name.contains("QUIET") ||
+                    name.contains("BACK") || name.contains("FRAME") -> "other"
+                type == 2 || name.contains("BATTERY") || name.contains("BATT") -> "other" // 电池温度另取,dumpsys 更准
+                type == null -> null
+                // 其余类型码(4 camera/5 flashlight/6/7 ...)归 other,保持有值
+                else -> "other"
+            } ?: continue
+            when (kind) {
+                "cpu" -> if (c > maxCpu) maxCpu = c
+                "soc" -> if (c > maxSoc) maxSoc = c
+                "other" -> if (c > maxOther) maxOther = c
+            }
+        }
+        return if (maxCpu > 0 || maxSoc > 0 || maxOther > 0) TempRead(maxCpu, maxSoc, maxOther) else null
+    }
+
+    /** sysfs thermal zone 遍历(提权进程内 File 遍历,见 CommandExecutor.readThermalZones) */
+    private suspend fun readTempsSysfs(): TempRead {
         val out = exec.readThermalZones()
         var maxCpu = -1f; var maxSoc = -1f; var maxOther = -1f
+        val colorOs = DeviceProfile.detect().isColorOs
         out.lines().forEach { line ->
             if (line.isBlank()) return@forEach
             val sp = line.indexOf(' ')
@@ -377,16 +492,39 @@ class MonitorSampler(
             val v = line.substring(sp + 1).trim().toFloatOrNull() ?: return@forEach
             if (v <= -1000f) return@forEach // 未接入传感器的 zone,值为极大负值
             val c = v / 1000f // m°C → °C
-            // zone 类型名归类:高通的 cpu*/cpuss* → cpu;aoss/tsens/soc → soc
-            val kind = when {
-                type.startsWith("cpu") || type.startsWith("cpuss") -> "cpu"
-                type.contains("soc") || type.contains("apc") ||
-                    type.startsWith("aoss") || type.contains("tsens") -> "soc"
-                else -> null
-            }
+            val t = type.lowercase()
+            // zone 类型名归类。
+            // HyperOS(小米,保持原已验证语义):cpu/cpuss 前缀 → cpu;soc/apc/aoss/tsens → soc;
+            //   其余一律丢弃(maxOther 恒 -1,与阶段一~八实机一致)。
+            // ColorOS(zone 命名不同):cpu-X-Y-Z/cpuss → cpu;gpuss(GPU)/nsph(NPU)/
+            //   mdmss(基带)/socd/ddr/video → soc;shell/skin/batt 等外壳/外设 → other。
+            val kind = if (colorOs) {
+                when {
+                    t.startsWith("cpu") || t.startsWith("cpuss") -> "cpu"
+                    t.startsWith("gpuss") || t.startsWith("aoss") || t.startsWith("nsph") ||
+                        t.startsWith("mdmss") || t.startsWith("socd") || t.startsWith("ddr") ||
+                        t.startsWith("video") || t.contains("soc") || t.contains("apc") ||
+                        t.contains("tsens") -> "soc"
+                    t.startsWith("shell") || t.startsWith("skin") || t.startsWith("batt") ||
+                        t.startsWith("xo") || t.startsWith("usb") || t.startsWith("pa") ||
+                        t.startsWith("wlan") || t.startsWith("camera") || t.startsWith("rear") ||
+                        t.startsWith("cam") || t.startsWith("vbat") || t.startsWith("ibat") ||
+                        t.startsWith("pm8") || t.contains("therm") || t.contains("charger") ||
+                        t.contains("svoc") -> "other"
+                    else -> null
+                }
+            } else {
+                when {
+                    t.startsWith("cpu") || t.startsWith("cpuss") -> "cpu"
+                    t.contains("soc") || t.contains("apc") ||
+                        t.startsWith("aoss") || t.contains("tsens") -> "soc"
+                    else -> null
+                }
+            } ?: return@forEach
             when (kind) {
                 "cpu" -> if (c > maxCpu) maxCpu = c
                 "soc" -> if (c > maxSoc) maxSoc = c
+                "other" -> if (c > maxOther) maxOther = c
             }
         }
         return TempRead(maxCpu, maxSoc, maxOther)
