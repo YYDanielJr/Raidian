@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -27,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -155,12 +157,18 @@ private fun LivePage(
     val overlayShown by vm.overlayShown.collectAsState()
     val watchTarget by vm.watchTarget.collectAsState()
     val context = LocalContext.current
+    val tablet = isTablet()
+
+    // 宽屏整页内容限宽居中(平板横屏避免内容拉满整条,维持舒适阅读宽度)
+    val contentMaxWidth = if (tablet) TabletContentMaxWidthDp.dp else Dp.Infinity
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Column(modifier = Modifier.fillMaxWidth().widthIn(max = contentMaxWidth)) {
         // 无悬浮窗权限时:顶部提示去授权
         if (!canOverlay) {
             SectionHeader("悬浮窗权限")
@@ -176,26 +184,33 @@ private fun LivePage(
             )
         }
 
-        // 设备环境:识别出的 ROM 家族 / 型号 / 采集适配方式(见 DeviceProfile)
-        val profile = remember { yy.daniel.raidian.monitor.DeviceProfile.detect() }
-        SectionHeader("设备环境")
-        HyperCard {
-            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                InfoRow("系统", profile.rom.label)
-                InfoRow("机型", profile.model.ifBlank { profile.brand })
-                InfoRow("簇探测", profile.clusterProbe.label)
-                InfoRow(
-                    "版本", profile.romVersion.ifBlank {
-                        "Android ${android.os.Build.VERSION.RELEASE}"
+        // 设备环境 + 实时数据:平板两卡并排(信息密度),手机上下排列
+        if (tablet) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                // 左:设备环境
+                Column(modifier = Modifier.weight(1f)) {
+                    SectionHeader("设备环境")
+                    HyperCard {
+                        DeviceEnvCard()
                     }
-                )
+                }
+                // 右:实时数据(九宫格)
+                Column(modifier = Modifier.weight(1f)) {
+                    SectionHeader("实时数据")
+                    HyperCard {
+                        SampleGrid(last)
+                    }
+                }
             }
-        }
-
-        // 实时数据卡片(九宫格数值)
-        SectionHeader("实时数据")
-        HyperCard {
-            SampleGrid(last)
+        } else {
+            SectionHeader("设备环境")
+            HyperCard {
+                DeviceEnvCard()
+            }
+            SectionHeader("实时数据")
+            HyperCard {
+                SampleGrid(last)
+            }
         }
 
         // 实时曲线:近 2 分钟历史,显示项与颜色可在悬浮窗设置页配置(见 LiveChartPrefs)
@@ -275,8 +290,40 @@ private fun LivePage(
             }
         }
 
-        // 会话控制:开始/停止记录 + 记录目标 + 当前帧统计
+        // 会话记录:记录目标(列表行)+ 控制(状态/统计/开始停止)
         SectionHeader("会话记录")
+
+        // 记录目标:与 AppPickActivity 内部一致的列表项(图标 + 应用名 + 包名)。
+        // 未指定时整行用次要色(灰),不用黑色主文字。
+        val target = watchTarget
+        val targetIcon = remember(target?.pkg) {
+            target?.pkg?.let { pkg -> appIconOf(context, pkg) }
+        }
+        HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            HyperListRow(onClick = { context.startActivity(Intent(context, AppPickActivity::class.java)) }) {
+                if (target != null) {
+                    ListRowContent(
+                        title = target.label,
+                        summary = target.pkg,
+                        leading = { AppIcon(targetIcon) },
+                        trailing = {
+                            Text(
+                                "更改",
+                                fontSize = 14.sp,
+                                color = MiuixTheme.colorScheme.primary,
+                            )
+                        },
+                    )
+                } else {
+                    ListRowContent(
+                        title = "跟随当前前台应用",
+                        summary = "未指定 · 谁在前台记谁",
+                        titleColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+        }
+
         HyperCard {
             Text(
                 text = when {
@@ -296,23 +343,10 @@ private fun LivePage(
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            // 记录目标(指定应用):显示当前选择,点击进入应用选择页
-            val targetText = watchTarget?.label ?: "跟随当前前台应用"
-            Text(
-                text = "记录目标：$targetText",
-                fontSize = 15.sp,
-                color = MiuixTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                    .clickable { context.startActivity(Intent(context, AppPickActivity::class.java)) }
-                    .padding(vertical = 10.dp, horizontal = 4.dp),
-            )
-            if (watchTarget != null) {
-                Spacer(Modifier.height(4.dp))
+            if (target != null) {
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "仅当「$targetText」在前台时记录，切走自动暂停、回来自动续录。",
+                    text = "仅当「${target.label}」在前台时记录，切走自动暂停、回来自动续录。",
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -339,30 +373,74 @@ private fun LivePage(
             }
         }
 
-        // 悬浮窗开关
-        SectionHeader("悬浮窗")
-        HyperCard {
-            Text(
-                text = if (overlayShown) "悬浮窗已显示" else "悬浮窗未显示",
-                style = MiuixTheme.textStyles.body1
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = { vm.toggleOverlay() },
-                colors = if (overlayShown) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColorsPrimary(),
-                modifier = Modifier.fillMaxWidth(),
-                enabled = canOverlay,
-            ) {
-                Text(if (overlayShown) "隐藏悬浮窗" else "显示悬浮窗", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        // 悬浮窗开关 + 权限通道:平板两卡并排
+        if (tablet) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    SectionHeader("悬浮窗")
+                    HyperCard {
+                        Text(
+                            text = if (overlayShown) "悬浮窗已显示" else "悬浮窗未显示",
+                            style = MiuixTheme.textStyles.body1
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { vm.toggleOverlay() },
+                            colors = if (overlayShown) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColorsPrimary(),
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = canOverlay,
+                        ) {
+                            Text(if (overlayShown) "隐藏悬浮窗" else "显示悬浮窗", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    SectionHeader("权限通道")
+                    HyperCard {
+                        ShizukuStatus(vm)
+                    }
+                }
+            }
+        } else {
+            SectionHeader("悬浮窗")
+            HyperCard {
+                Text(
+                    text = if (overlayShown) "悬浮窗已显示" else "悬浮窗未显示",
+                    style = MiuixTheme.textStyles.body1
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { vm.toggleOverlay() },
+                    colors = if (overlayShown) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColorsPrimary(),
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = canOverlay,
+                ) {
+                    Text(if (overlayShown) "隐藏悬浮窗" else "显示悬浮窗", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+            SectionHeader("权限通道")
+            HyperCard {
+                ShizukuStatus(vm)
             }
         }
-
-        // Shizuku 授权状态 + 请求授权按钮
-        SectionHeader("权限通道")
-        HyperCard {
-            ShizukuStatus(vm)
-        }
         Spacer(Modifier.height(20.dp))
+        } // 内层限宽 Column 结束
+    } // 外层滚动 Column 结束
+}
+
+/** 设备环境卡内容:识别出的 ROM 家族 / 型号 / 采集适配方式(见 DeviceProfile) */
+@Composable
+private fun DeviceEnvCard() {
+    val profile = remember { yy.daniel.raidian.monitor.DeviceProfile.detect() }
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        InfoRow("系统", profile.rom.label)
+        InfoRow("机型", profile.model.ifBlank { profile.brand })
+        InfoRow("簇探测", profile.clusterProbe.label)
+        InfoRow(
+            "版本", profile.romVersion.ifBlank {
+                "Android ${android.os.Build.VERSION.RELEASE}"
+            }
+        )
     }
 }
 

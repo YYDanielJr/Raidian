@@ -250,6 +250,9 @@ fun HyperListRow(
  * @param summary 副文本(说明/摘要);null/空串时不显示
  * @param leading 行首内容(如应用图标);默认无。非空时显示在标题左侧
  * @param trailing 行尾内容,默认右箭头;传 {} 可去掉
+ * @param titleColor 主文本颜色;null 用默认(onBackground)。传次要色可实现
+ *   "空态/未选中项以灰色展示"(如主页记录目标未指定时)
+ * @param summaryColor 副文本颜色;null 用默认(onSurfaceVariantSummary)
  */
 @Composable
 fun RowScope.ListRowContent(
@@ -258,6 +261,8 @@ fun RowScope.ListRowContent(
     summary: String? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: @Composable RowScope.() -> Unit = { ListChevron() },
+    titleColor: Color? = null,
+    summaryColor: Color? = null,
 ) {
     if (leading != null) {
         // 行首(leading)单独放:自带左缘留白(24dp 视觉起点,图标宽 32 近似),
@@ -278,10 +283,14 @@ fun RowScope.ListRowContent(
             .then(if (hasSummary) Modifier.heightIn(min = TwoLineRowMinHeight) else Modifier),
         verticalArrangement = Arrangement.Center,
     ) {
-        ListMainText(title)
+        ListMainText(title, color = titleColor ?: MiuixTheme.colorScheme.onBackground)
         if (hasSummary) {
             Spacer(Modifier.height(1.dp))
-            ListSecondaryText(summary, maxLines = 1)
+            ListSecondaryText(
+                summary,
+                maxLines = 1,
+                color = summaryColor ?: MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
         }
     }
     Spacer(Modifier.width(8.dp))

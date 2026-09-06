@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,9 +46,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
+import top.yukonga.miuix.kmp.basic.NavigationRail
+import top.yukonga.miuix.kmp.basic.NavigationRailItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.rememberNavigationRailState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.AppRecording
 import top.yukonga.miuix.kmp.icon.extended.Settings
@@ -122,147 +127,241 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
         subtitle = tabTitle,
         onBack = { (context as? android.app.Activity)?.finish() },
         content = { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(bottom = 80.dp) // 给底部导航栏让位
-                ) {
-                    // 重新运行设置向导入口:授权状态变化 / 换机 / 想重调偏好时可再次
-                    // 打开首次设置向导(向导可补 Shizuku 与悬浮窗授权,与本次设置同源)
-                    HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        HyperListRow(onClick = {
-                            context.startActivity(
-                                Intent(context, yy.daniel.raidian.SetupWizardActivity::class.java)
-                                    .putExtra(yy.daniel.raidian.SetupWizardActivity.EXTRA_FIRST_RUN, false)
-                            )
-                        }) {
-                            ListRowContent(
-                                title = "设置向导",
-                                summary = "重新运行首次设置:补授权、重选悬浮窗与实时曲线偏好",
-                            )
-                        }
+            val tablet = isTablet()
+            if (tablet) {
+                // ---- 平板/大屏:左侧 NavigationRail + 右侧内容(信息密度高、符合大屏导航习惯)----
+                Row(modifier = Modifier.fillMaxSize().padding(padding)) {
+                    // 左侧边导航:展开态显示图标 + 文字(平板信息密度高,常显标签)
+                    val railState = rememberNavigationRailState(
+                        initialValue = top.yukonga.miuix.kmp.basic.NavigationRailValue.Expanded
+                    )
+                    NavigationRail(state = railState) {
+                        NavigationRailItem(
+                            selected = tab == 0,
+                            onClick = { tab = 0 },
+                            icon = MiuixIcons.AppRecording,
+                            label = "实时曲线设置",
+                        )
+                        NavigationRailItem(
+                            selected = tab == 1,
+                            onClick = { tab = 1 },
+                            icon = MiuixIcons.Settings,
+                            label = "悬浮窗设置",
+                        )
                     }
-
-                    when (tab) {
-                        // ---------- Tab 0:实时曲线设置 ----------
-                        0 -> {
-                            HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                LiveChartPrefs.ALL.forEach { item ->
-                                    chartItemRow(item)
-                                }
-                            }
-                            Text(
-                                "主页「实时曲线」按以上设置绘制；默认开启帧率 / 占用 / 功耗，其余点开即显示。GPU 频率无 root 读不到，开启后显示占位。",
-                                fontSize = 12.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    // 右侧内容:独立滚动
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = TabletContentMaxWidthDp.dp)
+                        ) {
+                            SettingsBody(
+                                tab = tab,
+                                canOverlay = canOverlay,
+                                overlayShown = overlayShown,
+                                enabled = enabled,
+                                touchThrough = touchThrough,
+                                textSize = textSize,
+                                onUpdateEnabled = ::updateEnabled,
+                                onTouch = ::updateTouch,
+                                onSize = ::updateSize,
+                                onWizard = {
+                                    context.startActivity(
+                                        Intent(context, yy.daniel.raidian.SetupWizardActivity::class.java)
+                                            .putExtra(yy.daniel.raidian.SetupWizardActivity.EXTRA_FIRST_RUN, false)
+                                    )
+                                },
+                                onToggleOverlay = { toggleOverlayOrGuide() },
                             )
-                            Spacer(Modifier.height(6.dp))
-                        }
-
-                        // ---------- Tab 1:悬浮窗设置(开关 + 显示项 + 外观) ----------
-                        else -> {
-                            // 悬浮窗开关(整行可点)
-                            SectionHeader("悬浮窗")
-                            HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                HyperListRow(onClick = { toggleOverlayOrGuide() }) {
-                                    ListRowContent(
-                                        title = if (canOverlay) "悬浮窗" else "悬浮窗（未授权）",
-                                        summary = when {
-                                            !canOverlay -> "未授予悬浮窗权限，点击前往系统设置"
-                                            overlayShown -> "已显示，点击隐藏"
-                                            else -> "未显示，点击显示"
-                                        },
-                                        trailing = {
-                                            if (canOverlay) {
-                                                Switch(checked = overlayShown, onCheckedChange = null)
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-
-                            // 悬浮窗行显示项(键与 OverlayWindow.ALL_ITEMS 对应)
-                            SectionHeader("显示项")
-                            HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                itemSwitch("帧率", OverlayWindow.ITEM_FPS, enabled, ::updateEnabled)
-                                itemSwitch("CPU 频率 / 占用", OverlayWindow.ITEM_CPU, enabled, ::updateEnabled)
-                                itemSwitch("GPU 占用", OverlayWindow.ITEM_GPU, enabled, ::updateEnabled)
-                                itemSwitch("电池 / 核心温度", OverlayWindow.ITEM_TEMP, enabled, ::updateEnabled)
-                                itemSwitch("功耗 / 电量", OverlayWindow.ITEM_POWER, enabled, ::updateEnabled)
-                                itemSwitch("内存占用", OverlayWindow.ITEM_MEM, enabled, ::updateEnabled)
-                                itemSwitch("前台应用", OverlayWindow.ITEM_FRONT, enabled, ::updateEnabled)
-                                itemSwitch("网络（暂无数据）", OverlayWindow.ITEM_NET, enabled, ::updateEnabled)
-                            }
-
-                            // 触摸穿透
-                            SectionHeader("交互")
-                            HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                HyperListRow(onClick = { updateTouch(!touchThrough) }) {
-                                    ListRowContent(
-                                        title = "触摸穿透",
-                                        summary = if (touchThrough) "已开启：悬浮窗不拦截触摸（适合游戏中）"
-                                        else "已关闭：悬浮窗可点按拖动，单击切换穿透",
-                                        trailing = {
-                                            Switch(checked = touchThrough, onCheckedChange = null)
-                                        },
-                                    )
-                                }
-                            }
-
-                            // 字号(8~18sp,步进 1)
-                            SectionHeader("字号")
-                            HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                                HyperListRow {
-                                    ListRowContent(
-                                        title = "悬浮窗字号",
-                                        summary = "当前 ${textSize}sp（范围 8~18）",
-                                        trailing = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                SmallStepButton("－", { updateSize(textSize - 1) })
-                                                Spacer(Modifier.width(6.dp))
-                                                SmallStepButton("＋", { updateSize(textSize + 1) })
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-
-                            Text(
-                                "GPU 占用经 kgsl 计数可读（空闲显示 0%）；GPU 频率因系统限制无 root 读不到。",
-                                fontSize = 12.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                            )
-                            Spacer(Modifier.height(20.dp))
                         }
                     }
                 }
-
-                // 底部导航栏(普通整条贴底)
-                NavigationBar(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .height(70.dp),
-                ) {
-                    NavigationBarItem(
-                        selected = tab == 0,
-                        onClick = { tab = 0 },
-                        icon = MiuixIcons.AppRecording,
-                        label = "实时曲线设置",
-                    )
-                    NavigationBarItem(
-                        selected = tab == 1,
-                        onClick = { tab = 1 },
-                        icon = MiuixIcons.Settings,
-                        label = "悬浮窗设置",
-                    )
+            } else {
+                // ---- 手机:内容 + 底部导航栏 ----
+                Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(bottom = 80.dp) // 给底部导航栏让位
+                    ) {
+                        SettingsBody(
+                            tab = tab,
+                            canOverlay = canOverlay,
+                            overlayShown = overlayShown,
+                            enabled = enabled,
+                            touchThrough = touchThrough,
+                            textSize = textSize,
+                            onUpdateEnabled = ::updateEnabled,
+                            onTouch = ::updateTouch,
+                            onSize = ::updateSize,
+                            onWizard = {
+                                context.startActivity(
+                                    Intent(context, yy.daniel.raidian.SetupWizardActivity::class.java)
+                                        .putExtra(yy.daniel.raidian.SetupWizardActivity.EXTRA_FIRST_RUN, false)
+                                )
+                            },
+                            onToggleOverlay = { toggleOverlayOrGuide() },
+                        )
+                    }
+                    // 底部导航栏(普通整条贴底)
+                    NavigationBar(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .height(70.dp),
+                    ) {
+                        NavigationBarItem(
+                            selected = tab == 0,
+                            onClick = { tab = 0 },
+                            icon = MiuixIcons.AppRecording,
+                            label = "实时曲线设置",
+                        )
+                        NavigationBarItem(
+                            selected = tab == 1,
+                            onClick = { tab = 1 },
+                            icon = MiuixIcons.Settings,
+                            label = "悬浮窗设置",
+                        )
+                    }
                 }
             }
         },
     )
+}
+
+/**
+ * 设置页内容主体(设置向导入口 + 当前分页内容),手机/平板共用。
+ * 滚动容器由调用方提供。
+ */
+@Composable
+private fun SettingsBody(
+    tab: Int,
+    canOverlay: Boolean,
+    overlayShown: Boolean,
+    enabled: Set<String>,
+    touchThrough: Boolean,
+    textSize: Int,
+    onUpdateEnabled: (Set<String>) -> Unit,
+    onTouch: (Boolean) -> Unit,
+    onSize: (Int) -> Unit,
+    onWizard: () -> Unit,
+    onToggleOverlay: () -> Unit,
+) {
+    Column {
+        // 重新运行设置向导入口:授权状态变化 / 换机 / 想重调偏好时可再次
+        // 打开首次设置向导(向导可补 Shizuku 与悬浮窗授权,与本次设置同源)
+        HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+            HyperListRow(onClick = onWizard) {
+                ListRowContent(
+                    title = "设置向导",
+                    summary = "重新运行首次设置:补授权、重选悬浮窗与实时曲线偏好",
+                )
+            }
+        }
+
+        when (tab) {
+            // ---------- Tab 0:实时曲线设置 ----------
+            0 -> {
+                HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    LiveChartPrefs.ALL.forEach { item ->
+                        chartItemRow(item)
+                    }
+                }
+                Text(
+                    "主页「实时曲线」按以上设置绘制；默认开启帧率 / 占用 / 功耗，其余点开即显示。GPU 频率无 root 读不到，开启后显示占位。",
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+
+            // ---------- Tab 1:悬浮窗设置(开关 + 显示项 + 外观) ----------
+            else -> {
+                // 悬浮窗开关(整行可点)
+                SectionHeader("悬浮窗")
+                HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    HyperListRow(onClick = onToggleOverlay) {
+                        ListRowContent(
+                            title = if (canOverlay) "悬浮窗" else "悬浮窗（未授权）",
+                            summary = when {
+                                !canOverlay -> "未授予悬浮窗权限，点击前往系统设置"
+                                overlayShown -> "已显示，点击隐藏"
+                                else -> "未显示，点击显示"
+                            },
+                            trailing = {
+                                if (canOverlay) {
+                                    Switch(checked = overlayShown, onCheckedChange = null)
+                                }
+                            },
+                        )
+                    }
+                }
+
+                // 悬浮窗行显示项(键与 OverlayWindow.ALL_ITEMS 对应)
+                SectionHeader("显示项")
+                HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    itemSwitch("帧率", OverlayWindow.ITEM_FPS, enabled, onUpdateEnabled)
+                    itemSwitch("CPU 频率 / 占用", OverlayWindow.ITEM_CPU, enabled, onUpdateEnabled)
+                    itemSwitch("GPU 占用", OverlayWindow.ITEM_GPU, enabled, onUpdateEnabled)
+                    itemSwitch("电池 / 核心温度", OverlayWindow.ITEM_TEMP, enabled, onUpdateEnabled)
+                    itemSwitch("功耗 / 电量", OverlayWindow.ITEM_POWER, enabled, onUpdateEnabled)
+                    itemSwitch("内存占用", OverlayWindow.ITEM_MEM, enabled, onUpdateEnabled)
+                    itemSwitch("前台应用", OverlayWindow.ITEM_FRONT, enabled, onUpdateEnabled)
+                    itemSwitch("网络（暂无数据）", OverlayWindow.ITEM_NET, enabled, onUpdateEnabled)
+                }
+
+                // 触摸穿透
+                SectionHeader("交互")
+                HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    HyperListRow(onClick = { onTouch(!touchThrough) }) {
+                        ListRowContent(
+                            title = "触摸穿透",
+                            summary = if (touchThrough) "已开启：悬浮窗不拦截触摸（适合游戏中）"
+                            else "已关闭：悬浮窗可点按拖动，单击切换穿透",
+                            trailing = {
+                                Switch(checked = touchThrough, onCheckedChange = null)
+                            },
+                        )
+                    }
+                }
+
+                // 字号(8~18sp,步进 1)
+                SectionHeader("字号")
+                HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    HyperListRow {
+                        ListRowContent(
+                            title = "悬浮窗字号",
+                            summary = "当前 ${textSize}sp（范围 8~18）",
+                            trailing = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    SmallStepButton("－", { onSize(textSize - 1) })
+                                    Spacer(Modifier.width(6.dp))
+                                    SmallStepButton("＋", { onSize(textSize + 1) })
+                                }
+                            },
+                        )
+                    }
+                }
+
+                Text(
+                    "GPU 占用经 kgsl 计数可读（空闲显示 0%）；GPU 频率因系统限制无 root 读不到。",
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+                Spacer(Modifier.height(20.dp))
+            }
+        }
+    }
 }
 
 /** 显示项开关行:整行可点切换,尾部 Switch 展示当前状态 */

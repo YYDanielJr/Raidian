@@ -5,8 +5,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,9 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -26,13 +22,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
@@ -80,46 +71,6 @@ class AppPickActivity : ComponentActivity() {
 
 /** 设备上一个可启动应用(名称 + 包名 + 图标) */
 private data class AppEntry(val label: String, val pkg: String, val icon: android.graphics.drawable.Drawable?)
-
-/**
- * 应用图标:Drawable → Bitmap → ImageBitmap 画成 36dp 圆角小方块。
- * Bitmap 由 remember(entry) 缓存,避免每帧重建。
- */
-@Composable
-private fun AppIcon(drawable: android.graphics.drawable.Drawable?, size: Dp = 36.dp) {
-    val density = LocalDensity.current
-    val px = with(density) { size.toPx() }.toInt()
-    val bmp = remember(drawable) {
-        drawable?.let {
-            try {
-                val b = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
-                val c = android.graphics.Canvas(b)
-                // 自适应绘制(保持图标方形内缩放居中)
-                val src = android.graphics.Rect(0, 0, it.intrinsicWidth.coerceAtLeast(1), it.intrinsicHeight.coerceAtLeast(1))
-                val dst = android.graphics.Rect(0, 0, px, px)
-                it.setBounds(0, 0, px, px)
-                it.draw(c)
-                b
-            } catch (e: Exception) { null }
-        }
-    }
-    val img = bmp?.asImageBitmap()
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MiuixTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (img != null) {
-            Image(
-                bitmap = img,
-                contentDescription = null,
-                modifier = Modifier.size(size),
-            )
-        }
-    }
-}
 
 @Composable
 private fun AppPickScreen(modifier: Modifier = Modifier) {
