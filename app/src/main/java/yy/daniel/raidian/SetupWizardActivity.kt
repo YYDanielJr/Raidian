@@ -104,7 +104,7 @@ class SetupWizardActivity : ComponentActivity() {
     }
 
     companion object {
-        /** 是否由 MainActivity 首次启动路由进入(决定返回键的"跳过"语义) */
+        /** 是否由 MainActivity 首次启动路由进入（决定返回键的"跳过"语义） */
         const val EXTRA_FIRST_RUN = "first_run"
     }
 }
@@ -149,13 +149,13 @@ private fun SetupWizardScreen(firstRun: Boolean) {
         app.overlayController.setTouchThrough(v)
     }
 
-    /** 进入主页:置"已完成",关闭向导(首次启动时落到下方主页,二次进入时回到设置页) */
+    /** 进入主页:置"已完成"，关闭向导（首次启动时落到下方主页，二次进入时回到设置页） */
     fun enterApp() {
         setupPrefs.completed = true
         (context as? android.app.Activity)?.finish()
     }
 
-    // 返回键:步骤内先回上一步;第 0 步时,首次启动视为"稍后设置"直接跳过
+    // 返回键:步骤内先回上一步；第 0 步时，首次启动视为"稍后设置"直接跳过
     // (记已完成避免下次冷启动再次弹出),二次进入则直接返回
     BackHandler {
         if (page > 0) {
@@ -176,7 +176,7 @@ private fun SetupWizardScreen(firstRun: Boolean) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp),
+                .height(56.dp).padding(16.dp),
         ) {
             if (page > 0) {
                 IconButton(
@@ -355,17 +355,17 @@ private fun InfoRow(title: String, summary: String) {
 private fun WelcomePage() {
     PageHeading(
         title = "欢迎使用 Raidian",
-        description = "Raidian 在游戏等应用上层显示实时帧率、占用、温度与功耗,也可以把一段运行过程记录下来生成曲线报告。" +
-            "核心数据需要 Shizuku 提权读取,请按顺序完成以下几步授权与偏好设置,大约需要一分钟。",
+        description = "Raidian 在游戏等应用上层显示实时帧率、占用、温度与功耗，也可以把一段运行过程记录下来生成曲线报告。" +
+            "核心数据需要 Shizuku 提权读取，请按顺序完成以下几步授权与偏好设置，大约需要一分钟。",
     )
     SectionHeader("本向导将完成")
     HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-        InfoRow("Shizuku 授权", "提权通道,用于读取帧率、功耗、温度等系统数据")
+        InfoRow("Shizuku 授权", "提权通道，用于读取帧率、功耗、温度等系统数据")
         InfoRow("悬浮窗权限", "把监控浮窗叠加到游戏等应用上层")
         InfoRow("显示偏好", "选择悬浮窗显示项与主页实时曲线指标")
     }
     Text(
-        text = "以后随时可以在主页「设置」里重新打开本向导,补授权或调整偏好。",
+        text = "以后随时可以在主页「设置」里重新打开本向导，补授权或调整偏好。",
         fontSize = 13.sp,
         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
@@ -384,14 +384,14 @@ private fun ShizukuPage(
 ) {
     PageHeading(
         title = "授权 Shizuku",
-        description = "Shizuku 提供 adb 级提权通道,Raidian 通过它读取帧率、温度与功耗等数据。" +
-            "若设备上还没有 Shizuku,请先安装并启动服务,再回到本页完成授权。",
+        description = "Shizuku 提供 adb 级提权通道，Raidian 通过它读取帧率、温度与功耗等数据。" +
+            "若设备上还没有 Shizuku，请先安装并启动服务，再回到本页完成授权。",
     )
     SectionHeader("当前状态")
     HyperCard {
         when {
-            ok -> StatusRow("已授权,可以读取系统数据", ok = true)
-            alive -> StatusRow("Shizuku 已运行,尚未向 Raidian 授权", ok = false)
+            ok -> StatusRow("已授权，可以读取系统数据", ok = true)
+            alive -> StatusRow("Shizuku 已运行，尚未向 Raidian 授权", ok = false)
             installed -> StatusRow("Shizuku 未运行", ok = false)
             else -> StatusRow("未检测到 Shizuku 应用", ok = false)
         }
@@ -399,7 +399,7 @@ private fun ShizukuPage(
             ok -> {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "授权后本应用会自动连接提权通道,无需其它操作。",
+                    text = "授权后本应用会自动连接提权通道，无需其它操作。",
                     fontSize = 13.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -430,7 +430,7 @@ private fun ShizukuPage(
                 if (!installed) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "未检测到 Shizuku 应用。请从应用商店或 GitHub 发布页安装 Shizuku,安装后回到本页继续。",
+                        text = "未检测到 Shizuku 应用。请从应用商店或 GitHub 发布页安装 Shizuku，安装后回到本页继续。",
                         fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
@@ -449,12 +449,12 @@ private fun OverlayPermissionPage(
 ) {
     PageHeading(
         title = "悬浮窗权限",
-        description = "悬浮窗让监控数据常驻显示在游戏等应用的上层。点击下方按钮前往系统设置,允许 Raidian 显示在其他应用上层后返回本页。",
+        description = "悬浮窗让监控数据常驻显示在游戏等应用的上层。点击下方按钮前往系统设置，允许 Raidian 显示在其他应用上层后返回本页。",
     )
     SectionHeader("当前状态")
     HyperCard {
         if (granted) {
-            StatusRow("已授权,可以显示悬浮窗", ok = true)
+            StatusRow("已授权，可以显示悬浮窗", ok = true)
             Spacer(Modifier.height(10.dp))
             Text(
                 text = "回到主页即可用「显示悬浮窗」按钮试一下效果。",
@@ -498,7 +498,7 @@ private fun OverlayPrefsPage(
 ) {
     PageHeading(
         title = "悬浮窗显示内容",
-        description = "选择悬浮窗上常驻显示哪些数据,后续可在主页「设置 · 悬浮窗设置」中随时增删。",
+        description = "选择悬浮窗上常驻显示哪些数据，后续可在主页「设置 · 悬浮窗设置」中随时增删。",
     )
     SectionHeader("显示项")
     HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
@@ -519,7 +519,7 @@ private fun OverlayPrefsPage(
         HyperListRow(onClick = onToggleTouch) {
             ListRowContent(
                 title = "触摸穿透",
-                summary = if (touchThrough) "已开启:悬浮窗不拦截触摸,适合游戏中"
+                summary = if (touchThrough) "已开启:悬浮窗不拦截触摸，适合游戏中"
                 else "已关闭:悬浮窗可点按拖动",
                 trailing = {
                     Switch(checked = touchThrough, onCheckedChange = null)
@@ -536,7 +536,7 @@ private fun ChartPrefsPage() {
     val context = LocalContext.current
     PageHeading(
         title = "主页实时曲线",
-        description = "主页「实时曲线」按这里的勾选显示。默认已开启帧率、占用与功耗,其它指标按需打开;配色可在「设置 · 实时曲线设置」中调整。",
+        description = "主页「实时曲线」按这里的勾选显示。默认已开启帧率、占用与功耗，其它指标按需打开；配色可在「设置 · 实时曲线设置」中调整。",
     )
     HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
         LiveChartPrefs.ALL.forEach { item ->
@@ -568,18 +568,18 @@ private fun FinishPage(
 ) {
     PageHeading(
         title = "完成设置",
-        description = "Raidian 已准备好。下面的状态如有未完成项,可以随时在主页顶栏「设置」中重新打开本向导补授权。",
+        description = "Raidian 已准备好。下面的状态如有未完成项，可以随时在主页顶栏「设置」中重新打开本向导补授权。",
     )
     HyperCard {
         ListMainText("状态汇总")
         Spacer(Modifier.height(12.dp))
         StatusRow(
-            text = if (shizukuOk) "Shizuku:已授权" else "Shizuku:未授权(无法读取系统数据)",
+            text = if (shizukuOk) "Shizuku:已授权" else "Shizuku:未授权（无法读取系统数据）",
             ok = shizukuOk,
         )
         Spacer(Modifier.height(10.dp))
         StatusRow(
-            text = if (overlayGranted) "悬浮窗:已授权" else "悬浮窗:未授权(悬浮窗无法显示)",
+            text = if (overlayGranted) "悬浮窗:已授权" else "悬浮窗:未授权（悬浮窗无法显示）",
             ok = overlayGranted,
         )
         Spacer(Modifier.height(10.dp))
@@ -587,7 +587,7 @@ private fun FinishPage(
     }
     if (!shizukuOk) {
         Text(
-            text = "提示:记录会话、读取帧率与温度等功能依赖 Shizuku,建议先授权再开始使用。",
+            text = "提示:记录会话、读取帧率与温度等功能依赖 Shizuku，建议先授权再开始使用。",
             fontSize = 13.sp,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),

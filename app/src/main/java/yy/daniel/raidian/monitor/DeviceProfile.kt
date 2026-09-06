@@ -36,17 +36,17 @@ class DeviceProfile private constructor(
 
     enum class RomFamily(val label: String) {
         HYPEROS("HyperOS / MIUI"),
-        COLOROS("ColorOS(OPPO 系)"),
+        COLOROS("ColorOS（OPPO 系）"),
         AOSP("Android 原生 / 未知"),
     }
 
     enum class ClusterProbe(val label: String) {
         /** 高通传统 3 簇(小米 13 Ultra 等):频率表聚类即可,每簇一张表 */
-        FREQ_TABLE("频率表聚类(传统 3 簇)"),
+        FREQ_TABLE("频率表聚类（传统 3 簇）"),
         /** 骁龙 8 Gen 3 等 4 簇 / 中核双 bin:必须按 cpu_capacity 归并后取 L/M/B */
-        CAPACITY_8GEN3("cpu_capacity 聚类(4 簇双 bin)"),
+        CAPACITY_8GEN3("cpu_capacity 聚类（4 簇双 bin）"),
         /** 未知:频率表聚类,但不强依赖前 3 簇顺序(旧行为) */
-        UNKNOWN("频率表聚类(未知环境)"),
+        UNKNOWN("频率表聚类（未知环境）"),
     }
 
     override fun toString(): String =
