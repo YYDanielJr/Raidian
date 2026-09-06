@@ -262,7 +262,7 @@ private fun SettingsBody(
             HyperListRow(onClick = onWizard) {
                 ListRowContent(
                     title = "设置向导",
-                    summary = "重新运行首次设置:补授权、重选悬浮窗与实时曲线偏好",
+                    summary = "重新运行首次设置：补授权、重选悬浮窗与实时曲线偏好",
                 )
             }
         }
