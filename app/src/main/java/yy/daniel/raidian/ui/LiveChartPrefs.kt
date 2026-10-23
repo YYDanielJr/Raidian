@@ -2,6 +2,7 @@ package yy.daniel.raidian.ui
 
 import android.content.Context
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 
 /**
  * 主页"实时曲线"的显示配置(哪些指标显示 + 各曲线颜色),以及九宫格指标映射。
@@ -34,17 +35,23 @@ object LiveChartPrefs {
         ChartItem("gpu_load", "GPU 占用", true, listOf(Series("GPU占用", 0xFF673AB7.toInt()))),
         ChartItem(
             "cpu_freq", "CPU 频率", false,
-            listOf(
+            if (yy.daniel.raidian.monitor.DeviceProfile.detect().isXring) listOf(
+                Series("CPU 0–1", 0xFF66BB6A.toInt()), Series("CPU 2–3", 0xFF26A69A.toInt()),
+                Series("CPU 4–7", 0xFF1E88E5.toInt()), Series("CPU 8–9", 0xFFFFB300.toInt()),
+            ) else listOf(
                 Series("小核", 0xFF66BB6A.toInt()),
                 Series("中核", 0xFF1E88E5.toInt()),
                 Series("大核", 0xFFFFB300.toInt()),
             ),
         ),
         ChartItem("gpu_freq", "GPU 频率", false, listOf(Series("GPU频率", 0xFFF4511E.toInt()))),
-        ChartItem("power", "功耗", true, listOf(Series("功耗", 0xFF1E88E5.toInt()))),
+        ChartItem("power", "电池功率", true, listOf(Series("电池功率", 0xFF1E88E5.toInt()))),
         ChartItem("battery_temp", "电池温度", false, listOf(Series("电池温度", 0xFFFB8C00.toInt()))),
         ChartItem("soc_temp", "核心温度", false, listOf(Series("核心温度", 0xFFAB47BC.toInt()))),
         ChartItem("memory", "内存", false, listOf(Series("内存", 0xFF607D8B.toInt()))),
+        ChartItem("gpu_temp", "GPU 温度", false, listOf(Series("GPU 温度", 0xFF3949AB.toInt()))),
+        ChartItem("npu_temp", "NPU 温度", false, listOf(Series("NPU 温度", 0xFF00897B.toInt()))),
+        ChartItem("skin_temp", "机身温度", false, listOf(Series("机身温度", 0xFFFB8C00.toInt()))),
     )
 
     /** 用户可选的 Material 色板(色块网格用) */
@@ -76,7 +83,7 @@ object LiveChartPrefs {
     }
 
     fun setSeriesColor(context: Context, key: String, si: Int, color: Color) {
-        sp(context).edit().putInt("color_${key}_$si", color.value.toInt()).apply()
+        sp(context).edit().putInt("color_${key}_$si", color.toArgb()).apply()
     }
 
     /** 单线指标的简写:取第 0 系列颜色 */

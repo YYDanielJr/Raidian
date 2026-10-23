@@ -43,6 +43,13 @@ class RaidianApp : Application() {
     lateinit var overlayController: OverlayController
         private set
 
+    /**
+     * 续航 / 充电曲线记录控制器(Application 级常驻):
+     * 每 30s 记电池状态、每 5min 读系统 batterystats,产出续航曲线与充电曲线。
+     */
+    lateinit var batteryCurves: yy.daniel.raidian.battery.BatteryCurveController
+        private set
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -67,6 +74,9 @@ class RaidianApp : Application() {
         sessionStore = SessionStore(this)
         // 7) 悬浮窗控制器(Application 级,常驻)
         overlayController = OverlayController(this)
+        // 8) 续航 / 充电曲线记录(Application 级常驻循环 + 前台服务保活,见 BatteryCurveController)
+        batteryCurves = yy.daniel.raidian.battery.BatteryCurveController(this, executor)
+        batteryCurves.start()
     }
 
     companion object {

@@ -16,6 +16,10 @@ import kotlinx.coroutines.withContext
  * thermal)还会拖垮整个采样节奏,所以 [readThermalZones] 的降级分支套了 timeout 限时。
  */
 class CommandExecutor {
+    private val localHardware = HardwareSnapshotReader()
+    suspend fun readHardwareSnapshot(): String = withContext(Dispatchers.IO) {
+        shizuku?.readHardwareSnapshot() ?: localHardware.readSnapshot()
+    }
     companion object {
         private const val TAG = "CmdExec"
     }
@@ -41,11 +45,10 @@ class CommandExecutor {
         // 降级:尝试应用内直接读(应用对 thermal_zone 大多可读)
         return withContext(Dispatchers.IO) {
             try {
-                val proc = ProcessBuilder("sh", "-c", cmd)
-                    .redirectErrorStream(true).start()
-                val out = proc.inputStream.bufferedReader().use { it.readText().trim() }
-                proc.waitFor()
-                out
+                val result = BoundedCommand.run(cmd)
+                if (result.exitCode == -1) lastError = "命令超时"
+                result.output
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: Exception) {
                 lastError = e.message ?: "exec failed"
                 ""

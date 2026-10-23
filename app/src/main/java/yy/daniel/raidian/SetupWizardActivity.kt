@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -171,10 +172,12 @@ private fun SetupWizardScreen(firstRun: Boolean) {
             .fillMaxSize()
             .background(MiuixTheme.colorScheme.background)
             .systemBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // 顶部:返回 + 步骤指示点(HyperOS 设置页圆点样式)
         Box(
             modifier = Modifier
+                .widthIn(max = 720.dp)
                 .fillMaxWidth()
                 .height(56.dp).padding(16.dp),
         ) {
@@ -198,7 +201,7 @@ private fun SetupWizardScreen(firstRun: Boolean) {
         }
 
         // 页面内容(带轻微淡入淡出切换)
-        Box(modifier = Modifier.weight(1f)) {
+        Box(modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().weight(1f)) {
             Crossfade(targetState = page, animationSpec = tween(180)) { p ->
                 Column(
                     modifier = Modifier
@@ -241,6 +244,7 @@ private fun SetupWizardScreen(firstRun: Boolean) {
         // 底部主按钮
         Column(
             modifier = Modifier
+                .widthIn(max = 720.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .navigationBarsPadding()

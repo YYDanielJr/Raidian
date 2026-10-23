@@ -26,6 +26,8 @@ class CommandRunnerService private constructor(
     private val context: Context?,
     @Suppress("UNUSED_PARAMETER") marker: Unit,
 ) : ICommandRunner.Stub() {
+    private val hardware = yy.daniel.raidian.monitor.HardwareSnapshotReader()
+    override fun readHardwareSnapshot(): String = hardware.readSnapshot()
 
     /** Shizuku UserService 需要 () 构造器 */
     constructor() : this(null, Unit)
@@ -43,31 +45,7 @@ class CommandRunnerService private constructor(
      * 超时则杀进程、立即返回已读到的输出,不留僵尸。
      */
     private fun runWithTimeout(command: String): String {
-        val process = ProcessBuilder("sh", "-c", command)
-            .redirectErrorStream(true)
-            .start()
-        val out = java.util.concurrent.CompletableFuture<String>()
-        val reader = Thread {
-            try {
-                val text = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
-                out.complete(text)
-            } catch (e: Exception) {
-                out.complete("")
-            }
-        }
-        reader.isDaemon = true
-        reader.start()
-        return try {
-            val text = out.get(CMD_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
-            try { process.waitFor() } catch (e: Exception) { }
-            text
-        } catch (e: java.util.concurrent.TimeoutException) {
-            // 命令超时:杀掉进程避免僵尸
-            try { process.destroyForcibly() } catch (e2: Exception) { }
-            out.getNow("")
-        } catch (e: Exception) {
-            "ERROR: ${e.message}"
-        }
+        return yy.daniel.raidian.monitor.BoundedCommand.run(command, CMD_TIMEOUT_MS).output
     }
 
     /** AIDL:执行命令返回输出文本(带超时;超时/异常返回 ERROR 前缀或已读输出) */
@@ -87,36 +65,13 @@ class CommandRunnerService private constructor(
     }
 
     /** AIDL:执行命令,仅返回退出码(丢弃输出;带超时,超时返回 -1) */
-    override fun executeCommandWithExitCode(command: String): Int {
-        return try {
-            val process = ProcessBuilder("sh", "-c", command)
-                .redirectErrorStream(true)
-                .start()
-            BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-            process.waitFor()
-        } catch (e: Exception) {
-            -1
-        }
-    }
+    override fun executeCommandWithExitCode(command: String): Int =
+        try { yy.daniel.raidian.monitor.BoundedCommand.run(command).exitCode } catch (_: Exception) { -1 }
 
-    /** AIDL:执行命令,返回输出 + 退出码(CommandResult 可序列化跨进程) */
     override fun executeCommandWithResult(command: String): CommandResult {
-        return try {
-            val process = ProcessBuilder("sh", "-c", command)
-                .redirectErrorStream(true)
-                .start()
-            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText().trim() }
-            val exitCode = process.waitFor()
-            CommandResult().apply {
-                this.output = output
-                this.exitCode = exitCode
-            }
-        } catch (e: Exception) {
-            CommandResult().apply {
-                this.output = "ERROR: ${e.message}"
-                this.exitCode = -1
-            }
-        }
+        val result = try { yy.daniel.raidian.monitor.BoundedCommand.run(command) }
+            catch (e: Exception) { yy.daniel.raidian.monitor.BoundedCommand.Result(e.message.orEmpty(), -1) }
+        return CommandResult().apply { output = result.output; exitCode = result.exitCode }
     }
 
     /** AIDL:结束本 UserService 进程(Shizuku 会在需要时重新拉起) */

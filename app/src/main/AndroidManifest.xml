@@ -66,6 +66,18 @@
             android:label="会话详情"
             android:theme="@style/Theme.Raidian" />
 
+        <activity
+            android:name=".ui.CpuDetailsActivity"
+            android:exported="false"
+            android:label="CPU 详情"
+            android:theme="@style/Theme.Raidian" />
+
+        <activity
+            android:name=".ui.RuntimeStatusActivity"
+            android:exported="false"
+            android:label="运行状态详情"
+            android:theme="@style/Theme.Raidian" />
+
         <!-- 记录目标选择页:主页"会话记录"卡点记录目标进入 -->
         <activity
             android:name=".ui.AppPickActivity"
@@ -78,6 +90,27 @@
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:label="设置"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 续航曲线:历史放电周期详情(续航页历史列表进入) -->
+        <activity
+            android:name=".ui.BatteryCycleDetailActivity"
+            android:exported="false"
+            android:label="周期详情"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 续航曲线:单应用耗电与功耗曲线详情 -->
+        <activity
+            android:name=".ui.AppPowerDetailActivity"
+            android:exported="false"
+            android:label="应用耗电详情"
+            android:theme="@style/Theme.Raidian" />
+
+        <!-- 充电曲线:历史充电会话详情 -->
+        <activity
+            android:name=".ui.ChargeSessionDetailActivity"
+            android:exported="false"
+            android:label="充电详情"
             android:theme="@style/Theme.Raidian" />
 
         <!-- Shizuku binder 连接桥(必须,否则 app 无法发现 Shizuku 服务) -->
@@ -96,6 +129,16 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="performance_monitor_recording" />
+        </service>
+
+        <!-- 续航/充电曲线记录的前台服务(保活 + 常驻通知),逻辑在 Application 级控制器里 -->
+        <service
+            android:name=".battery.BatteryCurveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="battery_curve_recording" />
         </service>
     </application>
 

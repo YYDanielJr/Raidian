@@ -215,6 +215,7 @@ class ShizukuShell(private val context: Context) {
             )
                 .daemon(true)
                 .tag(USER_SERVICE_TAG)
+                .version(2)
                 .processNameSuffix("runner")
             Shizuku.bindUserService(args, conn)
         } catch (e: Exception) {
@@ -241,6 +242,7 @@ class ShizukuShell(private val context: Context) {
             )
                 .daemon(true)
                 .tag(USER_SERVICE_TAG)
+                .version(2)
                 .processNameSuffix("runner")
             Shizuku.unbindUserService(args, conn, false)
         } catch (e: Exception) {
@@ -264,7 +266,10 @@ class ShizukuShell(private val context: Context) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 r.executeCommand(cmd)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            runner = null
             Log.w(TAG, "exec failed", e)
             null
         }
@@ -280,6 +285,19 @@ class ShizukuShell(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.w(TAG, "readThermalZones failed", e)
+            null
+        }
+    }
+
+    suspend fun readHardwareSnapshot(): String? {
+        if (!available()) return null
+        val r = awaitRunner() ?: return null
+        return try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { r.readHardwareSnapshot() }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) {
+            runner = null
+            Log.w(TAG, "hardware snapshot failed", e)
             null
         }
     }

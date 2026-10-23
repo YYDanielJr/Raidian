@@ -123,6 +123,7 @@ class SessionStore(private val context: Context) {
             watchPkg = map["watchPkg"] as? String ?: "",
             intervalMs = (map["intervalMs"] as? Double)?.toLong() ?: 0L,
             fpsStats = fps,
+            recordedSamples = (map["recordedSamples"] as? Double)?.toInt() ?: -1,
             avgPowerMw = map["avgPowerMw"] as? Double ?: -1.0,
             avgBatteryTemp = map["avgBatteryTemp"] as? Double ?: -1.0,
             avgCpuTemp = map["avgCpuTemp"] as? Double ?: -1.0,

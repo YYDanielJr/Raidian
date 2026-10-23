@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.Card
@@ -20,6 +21,7 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -84,6 +86,8 @@ fun SubPageScaffold(
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
+    val backdrop = rememberUiBackdrop()
+    val blurSupported = isMiuixBlurSupported()
     val scrollBehavior = MiuixScrollBehavior(
         state = rememberTopAppBarState(),
         snapAnimationSpec = spring(stiffness = 2500f),
@@ -92,8 +96,10 @@ fun SubPageScaffold(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(
+            AdaptiveTopAppBar(
                 title = title,
+                modifier = Modifier.miuixTopBarBlur(backdrop),
+                color = if (blurSupported) Color.Transparent else MiuixTheme.colorScheme.surface,
                 largeTitle = title,
                 subtitle = subtitle,
                 titleColor = MiuixTheme.colorScheme.onSurface,
@@ -121,6 +127,7 @@ fun SubPageScaffold(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(if (blurSupported) Modifier.layerBackdrop(backdrop) else Modifier)
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
         ) {
             content(padding)

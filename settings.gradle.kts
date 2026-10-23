@@ -17,11 +17,14 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
+        google {
+            content {
+                excludeGroupByRegex("top\\.yukonga\\.miuix\\.kmp.*")
+            }
+        }
         mavenCentral()
     }
 }
 
 rootProject.name = "Raidian"
 include(":app")
- 

@@ -35,6 +35,12 @@ object ChartColors {
     val Network = Color(0xFF00897B)
     /** 内存:蓝灰(M3 BlueGrey 500 #607D8B 系) */
     val Memory = Color(0xFF607D8B)
+    /** 电量曲线(续航页):深绿(M3 Green 800),与帧率绿区分 */
+    val BatteryLevel = Color(0xFF2E7D32)
+    /** 充电功率/充电曲线:琥珀(M3 Amber 800) */
+    val Charge = Color(0xFFF9A825)
+    /** 单应用耗电(应用功耗详情):青绿(M3 Teal 600) */
+    val AppPower = Color(0xFF00897B)
 
     // ---- 每核频率:簇内同色系明暗梯度(M3 200/300/400/500/600/700/800 档) ----
     // 小核(0-2)绿系
@@ -56,6 +62,9 @@ object ChartColors {
      */
     fun corePalette(coreCount: Int): List<Color> {
         if (coreCount <= 0) return emptyList()
+        // 玄戒 O1 的四簇：0–1、2–3、4–7、8–9。
+        if (coreCount == 10) return CoreSmall.take(2) +
+            listOf(Color(0xFF26A69A), Color(0xFF00897B)) + CoreMid + CoreBig.take(2)
         val fallback = listOf(
             Color(0xFF66BB6A), Color(0xFF4CAF50), Color(0xFF42A5F5), Color(0xFF1E88E5),
             Color(0xFFFBC02D), Color(0xFFFB8C00), Color(0xFFF4511E), Color(0xFF8E24AA),

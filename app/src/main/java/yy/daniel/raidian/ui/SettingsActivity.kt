@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,6 +53,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.rememberNavigationRailState
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.AppRecording
 import top.yukonga.miuix.kmp.icon.extended.Settings
@@ -132,10 +134,12 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                 // ---- 平板/大屏:左侧 NavigationRail + 右侧内容(信息密度高、符合大屏导航习惯)----
                 Row(modifier = Modifier.fillMaxSize().padding(padding)) {
                     // 左侧边导航:展开态显示图标 + 文字(平板信息密度高,常显标签)
-                    val railState = rememberNavigationRailState(
-                        initialValue = top.yukonga.miuix.kmp.basic.NavigationRailValue.Expanded
-                    )
-                    NavigationRail(state = railState) {
+                    val expand = windowWidthDp() >= 1000
+                    val railState = rememberNavigationRailState(initialValue = if (expand)
+                        top.yukonga.miuix.kmp.basic.NavigationRailValue.Expanded else top.yukonga.miuix.kmp.basic.NavigationRailValue.Collapsed)
+                    androidx.compose.runtime.LaunchedEffect(expand) { if (expand) railState.expand() else railState.collapse() }
+                    NavigationRail(state = railState, defaultWindowInsetsPadding = false, showDivider = false,
+                        expandContentDescription = "展开导航", collapseContentDescription = "收起导航") {
                         NavigationRailItem(
                             selected = tab == 0,
                             onClick = { tab = 0 },
@@ -160,8 +164,8 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                     ) {
                         Column(
                             modifier = Modifier
-                                .fillMaxWidth()
                                 .widthIn(max = TabletContentMaxWidthDp.dp)
+                                .fillMaxWidth()
                         ) {
                             SettingsBody(
                                 tab = tab,
@@ -186,11 +190,18 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                 }
             } else {
                 // ---- 手机:内容 + 底部导航栏 ----
-                Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                val navigationBackdrop = rememberUiBackdrop()
+                val blurSupported = isMiuixBlurSupported()
+                Box(modifier = Modifier.fillMaxSize()) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .then(
+                                if (blurSupported) Modifier.layerBackdrop(navigationBackdrop)
+                                else Modifier
+                            )
                             .verticalScroll(rememberScrollState())
+                            .padding(padding)
                             .padding(bottom = 80.dp) // 给底部导航栏让位
                     ) {
                         SettingsBody(
@@ -216,7 +227,14 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                     NavigationBar(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .height(70.dp),
+                            .height(70.dp)
+                            .miuixNavigationBlur(
+                                backdrop = navigationBackdrop,
+                                shape = RectangleShape,
+                                tintAlpha = 0.72f,
+                            ),
+                        color = if (blurSupported) Color.Transparent else MiuixTheme.colorScheme.surface,
+                        showDivider = !blurSupported,
                     ) {
                         NavigationBarItem(
                             selected = tab == 0,
@@ -267,6 +285,7 @@ private fun SettingsBody(
             }
         }
 
+        BackgroundSettingsRow()
         when (tab) {
             // ---------- Tab 0:实时曲线设置 ----------
             0 -> {
@@ -276,7 +295,7 @@ private fun SettingsBody(
                     }
                 }
                 Text(
-                    "主页「实时曲线」按以上设置绘制；默认开启帧率 / 占用 / 功耗，其余点开即显示。GPU 频率无 root 读不到，开启后显示占位。",
+                    "主页按以上设置绘制曲线。部分设备未开放 GPU 频率或占用接口，未读取到的项目显示占位。",
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -353,7 +372,7 @@ private fun SettingsBody(
                 }
 
                 Text(
-                    "GPU 占用经 kgsl 计数可读（空闲显示 0%）；GPU 频率因系统限制无 root 读不到。",
+                    "GPU 数据取决于设备开放的接口。空闲为 0%，没有读取权限时显示 --。",
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),

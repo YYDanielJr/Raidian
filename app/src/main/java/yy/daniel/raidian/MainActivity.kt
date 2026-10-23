@@ -7,21 +7,23 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
+import androidx.navigationevent.compose.rememberNavigationEventDispatcherOwner
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import yy.daniel.raidian.ui.MainScreen
-import yy.daniel.raidian.ui.theme.RaidianTheme
+import yy.daniel.raidian.ui.HomeScreen
 
 /**
  * 主界面入口 Activity。
  *
- * 只做两件事:边缘到边(沉浸) + 用 MiuixTheme 包住 MainScreen。
- * 全部业务状态在 [MainViewModel],悬浮窗/采样等常驻工作在 Application 级
- * ([RaidianApp.overlayController]),Activity 销毁不影响它们。
+ * 承载 [HomeScreen]:底部导航(手机为悬浮胶囊栏,平板为左侧栏)在四个并列功能页之间切换 ——
+ * 「实时监控」「续航曲线」「充电曲线」「记录」。全部业务状态在 [MainViewModel],
+ * 悬浮窗/采样/曲线记录等常驻工作在 Application 级([RaidianApp.overlayController]、
+ * [RaidianApp.batteryCurves]),Activity 销毁不影响它们。
  *
- * 首次启动(尚未完成设置向导)时,先进入 [SetupWizardActivity] 完成
- * 授权与偏好设置,向导结束后回到主页。
+ * 首次启动(尚未完成设置向导)时,先进入 [SetupWizardActivity] 完成授权与偏好设置。
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,8 +38,15 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         setContent {
-            MiuixTheme {
-                MainScreen(modifier = Modifier.fillMaxSize())
+            // Miuix 的 OverlayDialog(记录页的多选删除确认)内部无条件调用
+            // NavigationBackHandler,需要组合树里存在 NavigationEventDispatcherOwner;
+            // 独立 Activity 里没有 navigation3 提供它,必须在此显式注入(踩坑记录见 AGENTS #13)。
+            // parent = null 必须显式传:组合根没有可继承的父 dispatcher。
+            val owner = rememberNavigationEventDispatcherOwner(enabled = true, parent = null)
+            CompositionLocalProvider(LocalNavigationEventDispatcherOwner provides owner) {
+                MiuixTheme {
+                    HomeScreen(modifier = Modifier.fillMaxSize())
+                }
             }
         }
     }
@@ -48,6 +57,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun RaidianPreview() {
     MiuixTheme {
-        MainScreen()
+        HomeScreen()
     }
 }

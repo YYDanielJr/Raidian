@@ -118,10 +118,10 @@ android {
 
     defaultConfig {
         applicationId = "yy.daniel.raidian"
-        minSdk = 26
+        minSdk = 33
         targetSdk = 37
         versionCode = 1
-        versionName = "0.1.3"
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 //
@@ -267,6 +267,7 @@ dependencies {
     implementation(libs.miuix.ui)
     implementation(libs.miuix.core)
     implementation(libs.miuix.icons)
+    implementation(libs.miuix.blur)
 
     // Navigation Event
     implementation(libs.androidx.navigationevent.compose)

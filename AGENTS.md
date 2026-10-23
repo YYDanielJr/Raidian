@@ -1,7 +1,7 @@
 # Raidian — 阶段性总结与后续开发指引
 
 > 本文件是给后续 AI 智能体(agent)的阶段交接文档。请先完整阅读,再继续开发。
-> 最近更新:2026-09-06(阶段八:设置页重构为通用「设置」两页导航,见 3.11)
+> 最近更新:2026-10-23（玄戒 O1 与小米平板 7S Pro，见第 8 节；先前设备结论不可直接套用 O1）
 
 ## 1. 项目目标
 
@@ -338,6 +338,86 @@ CSV 行片段(单位已正确):
 
 实机验证(用户确认):主页顶栏「设置」入口进入,标题「设置」,两页导航正常,悬浮窗相关设置齐全。
 
+### 3.12 阶段九(2026-09-06):骁龙 8 Elite 双簇 + 新 thermal 命名 + Android 17 排查 —— 小米 17 Pro Max 实机验证通过
+
+**起因**:用户在小米 17 Pro Max(`2509FPN0BC` / popsicle,骁龙 8 Elite,HyperOS V816,**Android 17/SDK 37**)上测试,反馈"界面显示 Shizuku 已授权、但 Shizuku 管理器内无授权记录、也拿不到任何运行参数"。此前已在小米 13 Ultra(Android 16)与一加 Pad Pro(ColorOS 16)通过。
+
+**排查结论(重要,区分三个独立问题)**:
+1. **Shizuku 授权即时生效、提权通道完全正常**。adb 方式启动的 Shizuku 13.6.0 下,app 首次请求授权、用户在系统对话框点允许后(实测 21:49:40),`yy.daniel.raidian:runner`(shell 身份 `u:r:shell:s0` uid 2000)立即被 Shizuku fork,此后持续执行采样命令并返回数据(实测单次 AIDL 返回 7572 bytes,含全部 CPU/thermal/内存/网络输出)。即:**授权记录写入成功、checkSelfPermission 返回 granted、UserService 绑定放行,全链路通畅**。授权前(hasPerm=false 期间)采样走降级分支才会出现大量 `untrusted_app` 身份的 `avc: denied`(属预期)。若界面仍显示"未授权":force-stop 后冷启动一次即恢复 `hasPerm=true granted=true`(Shizuku 授权按包名+签名持久,覆盖安装 -r 保留,无需重新授权)。
+2. **Shizuku 管理器「已授权应用列表为空」是 Android 17 的展示层问题**(已知 issue,[RikkaApps/Shizuku #2180](https://github.com/RikkaApps/Shizuku/issues/2180) 系列),不影响授权与 UserService 提权。别被它误导去重装/重复授权。
+3. **真正导致"拿不到参数"的是采集解析适配**(见下,本阶段核心修复):授权后命令其实已通过 runner 正常返回,但 CPU 频率解析把大核错放进中核槽、thermal zone 分类把新命名全丢弃,UI 才显示 `--`。
+
+**骁龙 8 Elite(小米 17 Pro Max)与小米 13 Ultra 的关键差异(实测)**:
+- **CPU 只有 2 簇**:cpu0-5 小核(capacity 762,频率表 384000–3628800)、cpu6-7 大核(capacity 1024,表 768000–4396800)。原代码 `buildByFreqTable` 按"频率表发现顺序"当簇号 → 大核落 freqs[1](被当中核),freqs[2] 恒 -1 → UI 的 cpuB(大核)永远显示 `--`。
+- **thermal zone 命名全变**:CPU 类 `cpullc-N-M`、`cpu-X-Y-Z`(每簇每核拆多个 zone);SoC/芯片类 `qmx-*`、`nsphmx/nsphvx-*`(NPU)、`gpuss-*`(GPU,0-10 共 11 个)、`mdmss-*`(基带)、`ddr`;另有 **`cpu-hw-trip-*` = 95°C 跳变阈值,不是实时温度,必须剔除**(值 95000 m°C 会污染 maxCpuTemp)。原 HyperOS 白名单(只认 cpu/cpuss 前缀 + soc/apc/aoss/tsens)把这些全丢弃 → maxSocTemp=-1 → 「核心温度」`--`。
+- GPU:gpubusy 仍 shell 可读(输出 ` 0 0`);频率节点仍全被拒(与 13 Ultra 相同,恒 --)。
+
+**修复(改动文件)**:
+```
+├── monitor/MonitorSampler.kt   # buildByFreqTable 重写:聚簇后按"每簇最高频"升序重映射到 L/M/B 档位
+│                               #   (2 簇→{L,B},3 簇→{L,M,B} 不回归,4+簇→中间并 M);
+│                               #   readTempsSysfs 改统一超集分类(不区分 ROM):
+│                               #     cpu/cpuss/cpullc → CPU;gpuss/nsph/qmx/mdmss/ddr/socd/video/aoss/apc/… → SoC;
+│                               #     shell/skin/batt/back/frame/… → other;含 trip 一律剔除
+├── overlay/OverlayWindow.kt    # CPU 行:3 簇显示 L/M/B;2 簇(无 cpuM)显示 "小核/大核"(L/B),不留中间 --
+├── ui/MainScreen.kt            # LiveMultiChart:过滤全空序列(2 簇无"中核"),图例/当前值/颜色同步裁剪
+└── monitor/DeviceProfile.kt    # FREQ_TABLE 标签改「频率表聚类(按频率分档)」(不再误导为固定 3 簇)
+```
+
+**簇重映射逻辑(关键实现细节)**:`buildByFreqTable` 先按"共享同一组 scaling_available_frequencies"聚簇得 k 簇;再按每簇**最高可用频率升序**把簇号映射到档位 —— rank 0 → L、rank k-1 → B、中间 → M。骁龙 8 Elite 2 簇 → 小核落 L 槽、大核落 B 槽(`cpu_l_mhz` 有值、`cpu_m_mhz` 恒 -1、`cpu_b_mhz` 有值)。小米 13 Ultra 3 簇最高频序 小<中<大 → 映射 {0,1,2} 与旧行为完全一致,无回归。`readMerged` 的 clusterReps/@@C 标记按重映射后的槽位发命令,天然自洽;CSV 仍固定三列 cpu_l/m/b + 8 列 per-core,消费方无需改动。
+
+**实机验证(用户全程配合,含 NBA2K20 游戏实测)**:
+- 实时页 CPU 频率 883MHz(修复前 `--`)、核心温度 37-60°C 随负载波动(修复前 `--`);
+- 悬浮窗:`CPU 998/883MHz 11%`(两簇格式,无中间 `--`)、FPS/GPU 占用/功耗/内存全部正常;
+- CSV 一行(NBA2K20,elapsed 31260ms):`cpu_l_mhz=2227,cpu_m_mhz=-1,cpu_b_mhz=4608,cpu0..5=2227/1113,cpu6/7=4608,max_cpu_temp_c=66.0,max_soc_temp_c=63.2,fps=56.1,power_mw=1894` —— 每核频率、双簇、温度归类全部正确;
+- 旧设备无回归:改动只影响簇重映射与新 zone 白名单,HM 13 Ultra 的 3 簇路径映射结果不变。
+
+**踩坑备忘(务必记住)**:
+- **Kotlin 块注释里写 `cpu*/cpuss*` 这类含 `*/` 的字面量 = 注释提前截断**,后面代码全变注释 → 报 "Expecting member declaration" 且错误行号错乱。注释里凡是想写路径通配一律别写(同 AGENTS.md 3.7 已警告的 `/*` 坑,这次是 `*/` 版本)。
+- `cpu-hw-trip-*` zone 值恒 95000(m°C)= 95°C 跳变阈值,必须按名字含 "trip" 剔除,否则 CPU 温度永远显示 95°C。
+- 8 Elite GPU 温度在 `gpuss-N`(N 到 10),归入 soc(芯温)合理,但注意别让 GPU 空闲 ~38°C 比 CPU 还高时误导 —— 取的是 max,可接受。
+- Android 17 新机若遇"界面说已授权但全 --":先 force-stop 冷启动确认 granted=true,再看 CSV 是否 cpu_m 恒 -1(2 簇正常)而非采集故障。
+
+### 3.13 阶段十(2026-09-06):版本 0.1.4 + 记录页内容被顶栏压没修复 —— 实机验证通过
+
+**起因**:用户报告小米 17 Pro Max 上「历史记录数据」页内容完全不显示——标题可见,下方整页空白;上划后能看到一个圆角白色容器的底部(即列表其实在,只是被整体推到可视区下方)。同时要求版本号升到 0.1.4。
+
+**根因(Miuix Scaffold 内容 padding 遗漏)**:`ui/RecordsActivity.kt` `RecordsScreen` 的 **手机分支** `Box(modifier = Modifier.fillMaxSize())` **漏掉了 `.padding(padding)`**(Scaffold content 槽下发的 [PaddingValues]);平板分支 `Row(... .padding(padding))` 是对的。Miuix Scaffold 的 body(ScaffoldLayout.MainContent)从 **y=0** 布局,不会自动让出顶栏/系统栏 —— 必须由内容自己 `.padding(padding)`。漏掉后,列表内容起点在屏幕顶端,正好被**展开态的大标题 TopAppBar(占高约 500px)** 整段盖住 → 首屏只见标题、下面全白;上划时列表滚出屏幕顶、留在下面的只有尾部容器(用户看到"圆角白色容器底部")。
+
+**为什么只有记录页中招**:其它子页(设置 SettingsActivity L189、会话详情 SessionDetailActivity L85、选应用 AppPickActivity L124、主页 MainScreen L150)与记录页平板分支都正确 `.padding(padding)`,唯独 RecordsActivity 手机分支当时漏写(阶段三后期加手机/平板分栏重构时引入)。
+
+**修复**:
+```
+└── app/build.gradle.kts                    # versionName "0.1.3" → "0.1.4"(versionCode 仍 1)
+└── ui/RecordsActivity.kt                   # 手机分支 Box 补 .padding(padding),并加注释警示
+                                            #   (Scaffold body 从 y=0 布局,不 pad 会被大标题顶栏盖住)
+```
+
+**排查技巧(复用)**:子页内容"首屏空白、上划见容器底部" = 内容整体被大标题 TopAppBar 压住,优先查该页 content 槽里的根 Box 是否漏 `.padding(padding)`。对照其它子页写法即可快速定位。
+
+**实机验证(用户确认)**:装 0.1.4 后记录页正常 ——「历史会话」小节 + NBA2K20 会话行(09-06 22:55 · 0分45秒 · 平均59.0 · 1%Low 4一)显示在标题下方,滚动正常。截图 `_shots/rec_fixed.png`(修复后)/ `rec_top.png`(修复前首屏)。
+
+### 3.14 阶段十一(2026-09-22):主页真悬浮导航 + 横滑分页 + 顶部重复留白修复 —— 小米 13 Ultra 实机验证通过
+
+用户反馈三项：首页悬浮导航实际占位、四页不能左右滑动、标题栏上下留白过大。对照同机小米相册与 Miuix 0.9.3 `Scaffold` / `TopAppBar` / `HorizontalPager` 实现后完成：
+
+- `ui/HomeScreen.kt`：四个主页分页统一改为 `HorizontalPager`。手势左右滑动可切页，点击底栏使用 380ms `FastOutSlowInEasing` 动画切页，选中态跟随 `pagerState.currentPage`；非首页按系统返回键先回实时页。
+- 悬浮栏不再放进 `Scaffold.bottomBar`，而是在根 `Box` 最后一层覆盖页面。正文会真实绘制并滚动到胶囊下方，不参与布局占位。
+- “额头”根因不是 `TopAppBar` 自身：旧 `HomeScreen` 外层 `Scaffold` 没有 `topBar`，因此把 status bar inset 加给正文；各子页自己的 `Scaffold + TopAppBar` 又处理一次，形成双倍顶部系统栏。根层现保留一个 `contentWindowInsets = WindowInsets(0, 0, 0, 0)` 的 Scaffold，只用于提供最外层 `MiuixPopupHost`，不再重复计算系统栏。
+- 必须保留这个零 inset 根 Scaffold：记录页 `OverlayDialog` 默认 `renderInRootScaffold=true`，需要最外层 popup host 才能盖住悬浮导航；直接用裸 `Box` 会让后组合的底栏画在弹窗上面。
+- `ui/FloatingNavBar.kt`：2026-09-22 后续按用户要求改为直接封装 Miuix `FloatingNavigationBar` / `FloatingNavigationBarItem`。样式为纯图标、28dp 图标、选中深色/未选中 40% 透明度、官方 squircle 胶囊与阴影；无文字、无蓝色选中底块、无整栏背景渐变，与小米相册同类组件一致。注释明确禁止放回 `bottomBar`。
+- 四个手机分页滚动内容末尾统一增加 `HomeFloatingNavContentPadding = 96.dp`：内容平时仍从悬浮栏后方滚过，只有到达末尾时才提供可滚动安全空间，使最后一项完整停在导航栏上方；平板仍保留原 20/24dp 页尾间距。
+
+实机验证：小米 13 Ultra（1440×3200、560dpi）安装 `Raidian_0.2.0_arm64-v8a_debug.apk` 后，首页/续航/充电/记录均可横滑，底栏选中态同步；续航页上下滚动后大标题正常折叠，顶部间距与同机小米相册接近；非首页按返回回实时页；首页与续航页滚到最底部后最后一项均完整位于导航栏上方；logcat 无 `FATAL EXCEPTION`。截图：`_shots/raidian_miuix_nav.png`、`_shots/raidian_bottom_clearance.png`、`_shots/raidian_endurance_bottom.png`、`_shots/raidian_records_stable.png`。
+
+### 3.15 阶段十二(2026-09-22):Miuix 0.9.4 迁移
+
+- `gradle/libs.versions.toml`：Miuix `miuix-ui` / `miuix-core` / `miuix-icons` 统一由 0.9.3 升到 0.9.4。
+- 对照 `references/miuix-main/` 中 0.9.4 源码、中文组件文档与 Demo 检查项目所用组件。0.9.4 对现有调用保持源码兼容；相关变化主要包括导航项自定义颜色、Scaffold 悬浮工具栏避让、TopAppBar 滚动状态、SearchBar 输入框背景色，以及 Dialog 布局和独立窗口返回事件修复。
+- 0.9.4 会通过传递依赖把 Compose UI / Foundation / Runtime 解析到 1.12.0；项目在 Kotlin 2.4.0 下编译通过，无需为本次迁移扩大工具链改动范围。
+
+验证：`:app:compileDebugKotlin`、`:app:testDebugUnitTest`、`:app:assembleDebug` 均通过；`Raidian_0.2.0_arm64-v8a_debug.apk` 覆盖安装到小米 13 Ultra 后冷启动正常，首页大标题、卡片、实时曲线与悬浮导航渲染正常，`AndroidRuntime` 无错误日志。
+
 ## 4. 构建 / 设备环境(必须按此操作)
 
 ### 4.1 Gradle 沙箱配置(重要!)
@@ -347,20 +427,23 @@ CSV 行片段(单位已正确):
 - Kotlin daemon 会报 `AccessDeniedException ... kotlin-daemon-client-*.tmp`(写用户 AppData 被拒),**无害**,忽略即可;偶发回退"Compile without daemon"
 
 ### 4.2 版本
-- AGP 9.4.0 / Kotlin **2.4.0**(必须,miuix 0.9.3 用 Kotlin 2.4 编译,低了读不了 metadata)/ compileSdk 37 / minSdk 26 / targetSdk 37
-- compose BOM 2026.02.01;Miuix 0.9.3(坐标 `top.yukonga.miuix.kmp:miuix-ui|core|icons`);Shizuku 13.1.5;kotlinx-serialization 1.8.0
+- AGP 9.4.0 / Kotlin **2.4.0** / compileSdk 37 / minSdk 26 / targetSdk 37
+- compose BOM 2026.02.01;Miuix 0.9.4(坐标 `top.yukonga.miuix.kmp:miuix-ui|core|icons`,传递解析 Compose 1.12.0);Shizuku 13.1.5;kotlinx-serialization 1.8.0
 - 本地 Gradle 发行版已复制到 `.gradle-dists`,wrapper 会自适配
 
 ### 4.3 设备调试
-- adb:设备序列号 `c9e352e3`(小米 13 Ultra)。命令形如 `adb -s c9e352e3 shell ...`
+- adb 设备(两台均已配 Shizuku/adb 授权):
+  - `c9e352e3` —— 小米 13 Ultra(`2304FPN6DC`, ishtar),Android 16,HyperOS V816(主测试机,阶段一~八)
+  - `ac07514c` —— 小米 17 Pro Max(`2509FPN0BC`, popsicle),**Android 17/SDK 37**,HyperOS V816,Shizuku 13.6.0(阶段九起;骁龙 8 Elite 双簇,见 3.12)
+  - 命令形如 `adb -s <序列号> shell ...`
 - 常用:
-  - 安装:`adb -s c9e352e3 install -r app/build/outputs/apk/debug/app-debug.apk`
-  - 启动:`adb -s c9e352e3 shell am start -n yy.daniel.raidian/.MainActivity`
-  - 日志:`adb -s c9e352e3 logcat -d | Select-String 'ShizukuShell|CmdExec|raidian'`
-  - 拉记录:`adb -s c9e352e3 shell run-as yy.daniel.raidian ls -t files/raidian/sessions/`,cat samples.csv
-  - 截图:`adb -s c9e352e3 shell screencap -p /sdcard/x.png` 再 pull(勿用 PowerShell 重定向,会损坏 PNG)
-- 手机可能锁屏 → `wm dismiss-keyguard` 或请用户解锁;`input keyevent` 在小米被 INJECT_EVENTS 限制
-- **Shizuku 状态**:服务由 Shizuku App 启动(adb 方式),已授权 Raidian。若重装 APK 后授权保留;force-stop 后重启 app 会自动重连(粘性监听)
+  - 安装:`adb -s <序列号> install -r app/build/outputs/apk/debug/app-debug.apk`(APK 实际名 `Raidian_0.1.3_arm64-v8a_debug.apk`)
+  - 启动:`adb -s <序列号> shell am start -n yy.daniel.raidian/.MainActivity`
+  - 日志:`adb -s <序列号> logcat -d | Select-String 'ShizukuShell|CmdExec|raidian'`
+  - 拉记录:`adb -s <序列号> shell run-as yy.daniel.raidian ls -t files/raidian/sessions/`,cat samples.csv
+  - 截图:`adb -s <序列号> shell screencap -p /sdcard/x.png` 再 pull(勿用 PowerShell 重定向,会损坏 PNG)
+- 手机可能锁屏 → `wm dismiss-keyguard` 或请用户解锁;`input keyevent` 在小米被 INJECT_EVENTS 限制;**小米 17 Pro Max 有 XSpace(用户 999),锁屏后 adb screencap 只能截到锁屏时钟,验证 UI 需用户解锁后停在前台页**
+- **Shizuku 状态**:服务由 Shizuku App 启动(adb 方式),已授权 Raidian。若重装 APK 后授权保留(按包名+签名);force-stop 后重启 app 会自动重连(粘性监听)。Android 17 上 Shizuku 管理器「已授权应用列表」可能显示为空(展示层 bug,不影响提权,见 3.12)。
 
 ### 4.4 测试节奏
 - 改后端后:`compileDebugKotlin` → `assembleDebug` → 安装 → 启动
@@ -447,10 +530,56 @@ CSV 行片段(单位已正确):
 | 阶段三:标题上滑回缩 | ✅ 实机通(Miuix scrollBehavior + nestedScroll) |
 | 阶段三:会话详情独立 Activity | ✅ 实机通 |
 | 阶段三:记录多选删除(含确认对话框) | ✅ 实机通(长按多选/FAB/全选/OverlayDialog 确认删除,崩溃已修复见 #13) |
+| 阶段九:骁龙 8 Elite 双簇 CPU 频率适配 | ✅ 实机通(簇重映射:2 簇→L/B 槽;CSV cpu_l=2227/cpu_b=4608,见 3.12) |
+| 阶段九:8 Elite 新 thermal 命名分类 | ✅ 实机通(qmx/nsph/gpuss/mdmss/ddr 归 soc 芯温;cpu-hw-trip 剔除;见 3.12) |
+| 阶段九:Android 17 + Shizuku 13.6 兼容 | ✅ 实机通(授权持久;管理器列表空为 Android 17 展示 bug,提权正常;见 3.12) |
+| 阶段十:版本 0.1.4 + 记录页内容被顶栏压没修复 | ✅ 实机通(RecordsActivity 手机分支补 .padding(padding),见 3.13) |
+| 阶段十二:Miuix 0.9.4 迁移 | ✅ 编译/单测/打包/小米 13 Ultra 冷启动通过(见 3.15) |
 
 ## 7. 协作与沟通约定
 - 后端改动后按 4.4 节奏验证;改单位换算、新数据源前**先查 references/scene-alternatives 对应实现**
-- **UI 组件改动(尤其 Miuix 组件用法)前,先查 `references/miuix-0.9.3/docs/zh_CN/components/` 对应文档 + `docs/zh_CN/guide/` + `example/shared/src/commonMain/kotlin/` 里该组件的实际用法**,不要只凭猜(教训见 #13:OverlayDialog 除了"放 Scaffold 内"还有隐藏的 NavigationEventDispatcherOwner 依赖,example 是通过 NavDisplay 间接提供的)
+- **UI 组件改动(尤其 Miuix 组件用法)前,先查 `references/miuix-main/docs/zh_CN/components/` 对应文档 + `docs/zh_CN/guide/` + `example/shared/src/commonMain/kotlin/` 里该组件的实际用法**(`references/miuix-main` 当前为 0.9.4 源码),不要只凭猜(教训见 #13:OverlayDialog 除了"放 Scaffold 内"还有隐藏的 NavigationEventDispatcherOwner 依赖)
 - 界面截图/数据验证:adb 截图 + image_ocr(中文 OCR 用默认引擎即可)
 - 需要用户操作手机(点按钮/授权)时,用 ask_user_question 明确引导
 - 每次重要里程碑可追加本文件更新记录(保持"最近更新"日期)
+
+## 8. 2026-10-23：玄戒 O1／小米平板 7S Pro
+
+本轮从 `master` 切换到新建的 `dev`，所有修改均在 `dev`，保留原工作区未提交内容。
+设备 `25053RP5CC`（violin），Android 16／SDK 36，`Build.SOC_MANUFACTURER=XRing`、`SOC_MODEL=O1`。不使用 root。
+
+### 实测数据源（优先于旧设备结论）
+
+- CPU present 为 `0-9`。四个 cpufreq policy：0（CPU 0–1，1795 MHz）、2（2–3，1891 MHz）、4（4–7，3043 MHz）、8（8–9，3398 MHz）。sysfs cpufreq 单位是 **kHz**，除以 1000 得 MHz；旧文将其写成 Hz 的地方不准确。
+- CPU 核数、在线状态、policy、当前频率、硬件最高频率、当前允许上限、每核占用动态采集，不再写死 8 核；CSV 同步按实际核数生成。离线与权限缺失分别标记，CPU 差分剔除重复 guest 计数、处理计数重置。
+- O1 thermal sysfs 的 type/temp 被 shell 权限拒绝。`dumpsys thermalservice` 的 **Current temperatures from HAL** 可读，共 38 个温区；Cached temperatures 可能是较旧阈值事件，不能当实时值。HAL 单位为摄氏度，不能再除以 1000。
+- HAL 只有 `cpu-3`、`cpu-5`、`cpu-6`、`cpu-8`、`cpu-9` 具有明确独立核号；其余核心温度显示未提供。`cpu-top`、`cpu-crg`、`cpu-ccw-*` 等为共享温区，保留原名，不复制成十核独立温度。新增 GPU、NPU、机身温度、热状态、可用内存、交换区用量、采样耗时和温区明细。
+- O1 GPU 为 Mali 路线。`/sys/class/devfreq/gpufreq/cur_freq`、gpufreq_usage、Mali vfreq_status 等均拒绝 shell 读取。因此这台设备的 GPU 频率／占用保持未知，**不得伪造 0%**；GPU 温度可由 HAL 获取。Adreno gpubusy 兼容保留。
+- 电流遵守 BatteryManager CURRENT_NOW 的 µA 契约，不用阈值猜单位，处理 Int.MIN_VALUE 未支持值。功率按原始 µA 算以免小电流截断。连接电源时是电池端净功率，不能解释成整机／应用功耗。
+- 前台焦点用 `dumpsys -t 1 window` 的 mCurrentFocus；O1 的 `window windows` 子命令不含该字段。SurfaceFlinger 保留活跃 Output Layer 优先、实际 present 时间戳、多候选和定期刷新。
+
+### 稳定性与 UI
+
+- `HardwareSnapshotReader` 在 Shizuku runner 内直接读文件，避免每核启动 cat；共享采样 Mutex 和 400ms 快照缓存，防止界面／浮窗／记录并发破坏差分。
+- shell 命令统一超时及有界输出；Shizuku UserService version 升到 2，以替换旧常驻 runner。修改 runner 实现后仍需更新 version 或结束旧 runner 再测试。
+- 记录／浮窗接入 MonitorService 前台服务；记录用单调时钟，停止与追加互斥，检查会话代数，防止旧采样写进新会话。CSV 每行 flush，真实落盘数另存 recordedSamples。会话 Low 帧值仍是采样窗口估算，界面已说明，不能声称是逐帧 1% Low。
+- **HyperOS 智能限制后台运行会暂停采样进程，前台服务本身不足以保证连续采集。实测将 Raidian 省电策略设为「无限制」后恢复正常。** 已在这台平板设置，并在应用主页／设置页增加后台运行设置入口；开始记录时请求通知权限。不要全局关闭系统省电或修改其它应用策略。
+- 参考实机系统设置的平板样式：Miuix 紧凑居中标题、左导航、白色圆角分组、正文最大宽度 720dp；较窄窗口收起导航，手机保留原大标题。加入十核表、频率限制明细、38 温区列表，曲线图例可换行，坐标轴适配深色。
+
+### 验证与后续复测
+
+- `:app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` 通过。新增 11 项解析／CSV／单位／失败降级测试，另有原模板测试 1 项。
+- `XringSamplingTest` 两项设备测试通过：Android ICU 温度解析、终末地实机场景的连续采集；后者覆盖纯后台、切出暂停、返回续录、浮窗和记录同时运行。约 82 秒会话写入 118 点，CPU 9 和 FPS 无缺失，38 温区完整；正常采样间隔中位数 570ms、P95 921ms，暂停段 5502ms。500ms 是目标周期，并非承诺每点严格 500ms。
+- 游戏场景稳定段约 60 FPS；包含切换瞬间的全段均值约 58.6 FPS。这是短时回归，不代表数小时压力测试或游戏性能评测。
+- Android ICU 比桌面 JVM 正则更严格：`Temperature\\{([^}]*)\\}` 两端花括号必须转义。此问题已增加设备端回归，不能仅凭 JVM 单测断言 Android 正确。
+- HyperOS 可能拦截测试进程直接发起的后台 Activity 跳转；设备测试通过 UiAutomation 的 shell `am start -W` 启动已安装应用，模拟用户打开界面，不修改后台弹窗权限。
+- 本机 adb 使用端口 15037（5037 绑定被 Windows 拒绝），测试命令：`adb -P 15037 -s 0B83147005901540 shell am instrument -w -e class yy.daniel.raidian.XringSamplingTest yy.daniel.raidian.test/androidx.test.runner.AndroidJUnitRunner`。设备需先授权 Shizuku、浮窗并允许后台运行，安装终末地。
+- `_shots/xring-validation.json`、`xring-samples.csv`、`xring-session.json` 是本地验证数据（已被 gitignore 排除）。参考实现：Scene CpuFrequencyUtils/GpuUtils、FrameX CPU/ThermalServiceParser、FPS-Meter-Android。
+- 单位契约可核对 [Linux CPUFreq 文档](https://www.kernel.org/doc/html/latest/admin-guide/pm/cpufreq.html) 与 [Android BatteryManager](https://developer.android.com/reference/android/os/BatteryManager)。
+
+### 同日：CPU／运行状态独立详情页
+
+- 首页 CPU、温度与运行状态卡片保留实时概览，移除行内展开小按钮，改用与会话记录一致的 Miuix 主题色满宽按钮（最小高 48dp），说明文字与按钮间隔 20dp。数据行增加纵向留白，说明采用 14sp／22sp 行高。
+- 新增 `CpuDetailsActivity` 与 `RuntimeStatusActivity`（共用 `HardwareDetailActivities.kt` 骨架，均不对外导出）。CPU 页显示逐核数据及全部 policy 的频率限制；运行状态页按类别展示完整温度传感器列表。详情页沿用 720dp 最大内容宽度、Miuix 自适应顶栏与返回操作。
+- 详情页订阅共享 `lastSample`，通过生命周期控制界面采样，仅可见时轮询；悬浮窗开启时复用悬浮窗采样，不能用一次性的 Intent 快照替代实时数据。
+- 悬浮窗电温、芯温单位统一为 `℃`。`:app:assembleDebug` 通过并安装到平板，实测两个独立 Activity 跳转、顶栏／系统返回、CPU 页横竖屏及旋转后的实时刷新、38 温区滚动访问和浮窗摄氏度显示；验证后关闭测试浮窗并恢复自动旋转。

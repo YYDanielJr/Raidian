@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -80,9 +81,8 @@ private fun SessionDetailScreen(
         content = { padding ->
             SessionDetailContent(
                 detail = detail,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                contentPadding = padding,
+                modifier = Modifier.fillMaxSize(),
             )
         },
     )
@@ -109,9 +109,14 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
 @Composable
 fun SessionDetailContent(
     detail: MainViewModel.SessionDetail?,
+    contentPadding: PaddingValues = PaddingValues(),
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.verticalScroll(rememberScrollState())) {
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(contentPadding),
+    ) {
         if (detail == null) {
             Text(
                 "无法读取该会话",
@@ -132,14 +137,17 @@ fun SessionDetailContent(
             HyperCard {
                 InfoRow("时间", time)
                 InfoRow("时长", durStr)
+                if (meta.recordedSamples >= 0) InfoRow("记录点数", meta.recordedSamples.toString())
                 meta.fpsStats.takeIf { it.sampleCount > 0 }?.let { fps ->
                     InfoRow("帧率统计", String.format(
                         "平均 %.1f · 1%%Low %.1f · 0.1%%Low %.1f （采样 %d）",
                         fps.avgFps, fps.low1Fps, fps.low01Fps, fps.sampleCount
                     ))
+                    Text("Low 值为采样窗口的低帧均值估算。", fontSize = 13.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 }
                 if (meta.avgPowerMw > 0) {
-                    InfoRow("平均功耗", if (meta.avgPowerMw > 1000)
+                    InfoRow("平均电池功率", if (meta.avgPowerMw > 1000)
                         String.format("%.2f W", meta.avgPowerMw / 1000) else String.format("%.0f mW", meta.avgPowerMw))
                 }
                 if (meta.avgBatteryTemp > 0) InfoRow("平均电池温度", String.format("%.1f °C", meta.avgBatteryTemp))
@@ -161,17 +169,35 @@ fun SessionDetailContent(
                     Spacer(Modifier.height(10.dp))
                 }
                 // GPU 占用曲线
+                if (detail.perCoreLoad.any { series -> series.any { it >= 0 } }) {
+                    DetailMultiChart("CPU 每核占用（%）", detail.perCoreLoad, xl)
+                    Spacer(Modifier.height(10.dp))
+                }
+                if (detail.perCoreTemp.any { series -> series.any { it >= 0 } }) {
+                    DetailMultiChart("CPU 独立温度传感器（℃）", detail.perCoreTemp, xl)
+                    Spacer(Modifier.height(10.dp))
+                }
+                val extraLabels = mapOf("gpu_temp_c" to "GPU 温度（℃）", "npu_temp_c" to "NPU 温度（℃）",
+                    "skin_temp_c" to "机身温度（℃）", "thermal_status" to "系统热状态（0～6）",
+                    "available_mem_mb" to "可用内存（MB）", "swap_used_mb" to "交换区已用（MB）")
+                detail.extraSeries.forEach { (key, values) ->
+                    if (values.any { it >= 0 }) {
+                        DetailChart(extraLabels.getValue(key), sampleSeries(values), 0f, null,
+                            if (key.contains("temp")) ChartColors.GpuTemp else ChartColors.Memory, xl)
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
                 if (detail.gpuLoad.any { it >= 0f }) {
                     DetailChart("GPU 占用（%）", sampleSeries(detail.gpuLoad), 0f, 100f, ChartColors.Gpu, xl)
                     Spacer(Modifier.height(10.dp))
                 }
                 var drewAny = detail.perCoreFreq.isNotEmpty() || detail.gpuLoad.any { it >= 0f }
                 if (detail.fps.isNotEmpty() && detail.fps.any { it >= 0f }) {
-                    DetailChart("帧率（FPS）", sampleSeries(detail.fps), 0f, 120f, ChartColors.Fps, xl)
+                    DetailChart("帧率（FPS）", sampleSeries(detail.fps), 0f, maxOf(120f, detail.fps.maxOrNull() ?: 0f), ChartColors.Fps, xl)
                     Spacer(Modifier.height(10.dp)); drewAny = true
                 }
                 if (detail.power.any { it > 0f }) {
-                    DetailChart("功耗（mW）", sampleSeries(detail.power), 0f, null, ChartColors.Power, xl)
+                    DetailChart("电池功率（mW）", sampleSeries(detail.power), 0f, null, ChartColors.Power, xl)
                     Spacer(Modifier.height(10.dp)); drewAny = true
                 }
                 if (detail.batteryTemp.any { it >= 0f }) {

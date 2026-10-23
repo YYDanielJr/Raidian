@@ -2,6 +2,10 @@ package yy.daniel.raidian.monitor
 
 import android.content.Context
 import android.util.Log
+import android.os.SystemClock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,8 +95,11 @@ class SessionRecorder(
     @Volatile private var sessionDir: File? = null
     @Volatile private var sessionMeta: SessionMeta? = null
     @Volatile private var csvWriter: java.io.BufferedWriter? = null
+    private var csvCoreCount: Int? = null
     @Volatile private var job: kotlinx.coroutines.Job? = null
     @Volatile private var stopFlag = false
+    private var generation = 0L
+    private var recordedSamples = 0
 
     /** 采集协程作用域:独立于任何 Activity/ViewModel,Dispatchers.Default 跑 IO 混合任务 */
     private val scope = kotlinx.coroutines.CoroutineScope(
@@ -126,9 +133,12 @@ class SessionRecorder(
      * @param watchPkg 门控目标包名:非空时仅当该应用在前台才记录(否则暂停);
      *                 null/空 = 不门控(跟随前台,原行为)
      */
+    @Synchronized
     fun start(targetPkg: String, targetLabel: String, watchPkg: String? = null) {
         if (_running.value) return
         stopFlag = false
+        val token = ++generation
+        recordedSamples = 0
         gatePkg = watchPkg?.takeIf { it.isNotBlank() } ?: _watchTarget.value?.pkg
         _paused.value = false
         recentFps.clear()
@@ -139,10 +149,10 @@ class SessionRecorder(
             cpuTempSum = 0.0; cpuTempCount = 0L
         }
         val time = System.currentTimeMillis()
-        startElapsed = time
-        lastSampleAt = time
-        // 目录名带秒级时间戳,天然保证唯一且可按名排序(新→旧)
-        val dirName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(time))
+        startElapsed = SystemClock.elapsedRealtime()
+        lastSampleAt = startElapsed
+        // 毫秒时间戳避免快速停止再开始时覆盖上一份记录。
+        val dirName = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(time))
         val base = File(context.filesDir, "raidian/sessions")
         val dir = File(base, dirName)
         dir.mkdirs()
@@ -159,8 +169,7 @@ class SessionRecorder(
             // 先写表头再写数据
             val f = File(dir, "samples.csv")
             val w = f.bufferedWriter(Charsets.UTF_8)
-            w.write(Sample(elapsedMs = 0).toCsvHeader())
-            w.newLine()
+            csvCoreCount = null // 首次快照后按真实拓扑写表头，不能预设八核。
             csvWriter = w
         } catch (e: Exception) {
             Log.e(TAG, "start: cannot open csv", e)
@@ -168,13 +177,16 @@ class SessionRecorder(
         }
         writeMeta(meta)
         _running.value = true
-        job = scope.launch { loop() }
+        MonitorService.start(context)
+        job = scope.launch { loop(token) }
     }
 
     /** 停止会话:停循环、关文件、把统计均值写回 session.json */
+    @Synchronized
     fun stop() {
         if (!_running.value) return
         stopFlag = true
+        generation++
         job?.cancel()
         job = null
         try { csvWriter?.close() } catch (e: Exception) { }
@@ -193,7 +205,8 @@ class SessionRecorder(
             }
             writeMeta(meta.copy(
                 endTime = end,
-                durationMs = end - startElapsed,
+                durationMs = SystemClock.elapsedRealtime() - startElapsed,
+                recordedSamples = recordedSamples,
                 fpsStats = stats,
                 avgPowerMw = avgPower,
                 avgBatteryTemp = avgBatt,
@@ -201,15 +214,18 @@ class SessionRecorder(
             ))
         }
         _running.value = false
+        _paused.value = false
+        MonitorService.stopIfIdle(context)
     }
 
     /** 采样主循环:按 intervalMs 节奏采样 → 统计 → 写 CSV;每 50ms 醒一次检查节奏 */
-    private suspend fun loop() {
+    private suspend fun loop(token: Long) {
         // 门控时每次采样前后台检测的间隔(前台识别有 shell 开销,不用 50ms 查)
         val gateCheckEvery = intervalMs.coerceAtLeast(200L)
         var lastGateCheck = 0L
         while (!stopFlag) {
-            val now = System.currentTimeMillis()
+            currentCoroutineContext().ensureActive()
+            val now = SystemClock.elapsedRealtime()
 
             // ---- 门控检测:指定了目标应用时,前台不在目标 → 暂停 ----
             val wp = gatePkg
@@ -218,6 +234,8 @@ class SessionRecorder(
                     lastGateCheck = now
                     val (front, _) = try {
                         appState.readFrontApp()
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         "" to ""
                     }
@@ -241,20 +259,26 @@ class SessionRecorder(
                 val elapsed = now - startElapsed
                 try {
                     val s = sampler.sample(elapsed)
-                    // FPS 进统计(仅有效帧)
-                    if (s.fps > 0) {
-                        synchronized(recentFps) {
-                            recentFps.add(s.fps)
-                            if (recentFps.size > 60 * 60 * 2) recentFps.removeAt(0) // 上限:2 小时(500ms×14400 点)
+                    currentCoroutineContext().ensureActive()
+                    synchronized(this) {
+                        if (generation != token || !_running.value || (wp != null && s.frontPkg != wp)) return@synchronized
+                        // FPS 进统计(仅有效帧)
+                        if (s.fps > 0) {
+                            synchronized(recentFps) {
+                                recentFps.add(s.fps)
+                                if (recentFps.size > 60 * 60 * 2) recentFps.removeAt(0)
+                            }
                         }
+                        synchronized(statLock) {
+                            if (s.powerMw >= 0) { powerSum += s.powerMw; powerCount++ }
+                            if (s.batteryTemp > 0) { battTempSum += s.batteryTemp; battTempCount++ }
+                            if (s.maxCpuTemp > 0) { cpuTempSum += s.maxCpuTemp; cpuTempCount++ }
+                        }
+                        appendCsv(s)
+                        updateStats()
                     }
-                    synchronized(statLock) {
-                        if (s.powerMw > 0) { powerSum += s.powerMw; powerCount++ }
-                        if (s.batteryTemp > 0) { battTempSum += s.batteryTemp; battTempCount++ }
-                        if (s.maxCpuTemp > 0) { cpuTempSum += s.maxCpuTemp; cpuTempCount++ }
-                    }
-                    appendCsv(s)
-                    updateStats()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     // 单次采样失败不中断记录
                     Log.w(TAG, "sample failed", e)
@@ -269,9 +293,15 @@ class SessionRecorder(
         try {
             val w = csvWriter ?: return
             synchronized(w) {
-                w.write(s.toCsvRow())
+                if (csvCoreCount == null) {
+                    csvCoreCount = s.perCoreFreqMhz.size
+                    w.write(s.toCsvHeader(csvCoreCount!!))
+                    w.newLine()
+                }
+                w.write(s.toCsvRow(csvCoreCount!!))
                 w.newLine()
                 w.flush() // 保证崩溃时数据不丢
+                recordedSamples++
             }
         } catch (e: Exception) {
             Log.w(TAG, "csv write failed", e)
@@ -369,6 +399,8 @@ data class SessionMeta(
     val avgBatteryTemp: Double = -1.0,
     /** 平均核心温度 °C */
     val avgCpuTemp: Double = -1.0,
+    /** 实际落盘的 CSV 行数，独立于有效 FPS 样本数。旧会话缺失时为 -1。 */
+    val recordedSamples: Int = -1,
 ) {
     /** 序列化为 JSON 字符串(手写拼接,字段少、结构固定,避免引入 JSON 库) */
     fun toJson(): String {
@@ -385,6 +417,7 @@ data class SessionMeta(
         sb.append("\"low1Fps\":").append(fpsStats.low1Fps).append(",")
         sb.append("\"low01Fps\":").append(fpsStats.low01Fps).append(",")
         sb.append("\"sampleCount\":").append(fpsStats.sampleCount).append(",")
+        sb.append("\"recordedSamples\":").append(recordedSamples).append(",")
         sb.append("\"avgPowerMw\":").append(avgPowerMw).append(",")
         sb.append("\"avgBatteryTemp\":").append(avgBatteryTemp).append(",")
         sb.append("\"avgCpuTemp\":").append(avgCpuTemp)

@@ -3,6 +3,15 @@ package yy.daniel.raidian.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.SmallTopAppBar
+import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 平板 / 大屏响应式判定与布局常量。
@@ -32,3 +41,33 @@ fun windowWidthDp(): Int {
 
 /** 平板详情/设置等子页的最大内容宽度(避免横屏整条拉太宽,居中限宽) */
 val TabletContentMaxWidthDp = 720
+
+/** 与平板系统设置一致使用紧凑标题，手机保留可折叠大标题。 */
+@Composable
+fun AdaptiveTopAppBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    color: Color = MiuixTheme.colorScheme.surface,
+    largeTitle: String = title,
+    titleColor: Color = MiuixTheme.colorScheme.onSurface,
+    largeTitleColor: Color = titleColor,
+    subtitle: String = "",
+    subtitleColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+    titlePadding: Dp = 24.dp,
+    navigationIconPadding: Dp = 12.dp,
+    scrollBehavior: ScrollBehavior? = null,
+) {
+    if (isTablet()) {
+        SmallTopAppBar(title = title, modifier = modifier, color = color, titleColor = titleColor,
+            subtitle = subtitle, subtitleColor = subtitleColor, navigationIcon = navigationIcon,
+            actions = actions, titlePadding = titlePadding, navigationIconPadding = navigationIconPadding,
+            scrollBehavior = scrollBehavior)
+    } else {
+        TopAppBar(title = title, modifier = modifier, color = color, titleColor = titleColor,
+            largeTitle = largeTitle, largeTitleColor = largeTitleColor, subtitle = subtitle,
+            subtitleColor = subtitleColor, navigationIcon = navigationIcon, actions = actions,
+            titlePadding = titlePadding, navigationIconPadding = navigationIconPadding, scrollBehavior = scrollBehavior)
+    }
+}

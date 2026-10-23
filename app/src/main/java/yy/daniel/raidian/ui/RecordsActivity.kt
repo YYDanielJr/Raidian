@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -93,7 +94,16 @@ class RecordsActivity : ComponentActivity() {
 }
 
 @Composable
-fun RecordsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
+fun RecordsScreen(
+    modifier: Modifier = Modifier,
+    vm: MainViewModel = viewModel(),
+    /**
+     * 是否显示顶栏返回键。
+     * 独立 Activity 进入时 true(返回键关闭页面);作为 HomeScreen 底部导航的一页时
+     * false(没有"返回"语义,系统返回键交给宿主)。
+     */
+    showBack: Boolean = true,
+) {
     val context = LocalContext.current
     val sessions by vm.sessions.collectAsState()
 
@@ -128,9 +138,11 @@ fun RecordsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()
             // 进入选择状态不改标题:标题始终是"历史记录数据"
             title = "历史记录数据",
             subtitle = if (selecting) "已选 ${selected?.size ?: 0} 项" else "",
-            onBack = {
-                if (selecting) selected = null
-                else (context.findActivity())?.finish()
+            onBack = if (!showBack) null else {
+                {
+                    if (selecting) selected = null
+                    else (context.findActivity())?.finish()
+                }
             },
             actions = {
                 if (selecting) {
@@ -222,6 +234,8 @@ fun RecordsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()
                     }
                 } else {
                     // ---- 手机:全屏列表,点行进独立详情页 ----
+                    // 滚动视口保持全屏，首屏用 contentPadding 让出标题；上滑后内容可从
+                    // 标题栏后方经过，供 miuix-blur 捕获真实背景。
                     Box(modifier = Modifier.fillMaxSize()) {
                         SessionListPage(
                             vm = vm,
@@ -233,6 +247,7 @@ fun RecordsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()
                                 else selected = (selected ?: emptySet()) + path
                             },
                             onToggle = { path -> toggleSelect(path) },
+                            contentPadding = padding,
                             modifier = Modifier.fillMaxSize(),
                         )
                         if (selecting) {
@@ -331,6 +346,7 @@ private fun SessionListPage(
     onOpen: (File) -> Unit,
     onLongPress: (String) -> Unit,
     onToggle: (String) -> Unit,
+    contentPadding: PaddingValues = PaddingValues(),
     modifier: Modifier = Modifier,
 ) {
     val running by vm.recorder.running.collectAsState()
@@ -345,6 +361,7 @@ private fun SessionListPage(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            .padding(contentPadding)
     ) {
         if (running) {
             SectionHeader("正在记录")
@@ -404,8 +421,8 @@ private fun SessionListPage(
                 }
             }
         }
-        // 底部留白给悬浮删除按钮让路
-        Spacer(Modifier.height(96.dp))
+        // 同时给主页悬浮导航与多选态删除按钮留出滚动末尾安全空间。
+        Spacer(Modifier.height(HomeFloatingNavContentPadding))
     }
 }
 

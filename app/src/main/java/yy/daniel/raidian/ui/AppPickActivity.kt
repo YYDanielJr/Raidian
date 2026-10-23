@@ -121,11 +121,12 @@ private fun AppPickScreen(modifier: Modifier = Modifier) {
         title = "选择记录目标",
         onBack = { (context.findActivity())?.finish() },
         content = { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
+                        .padding(padding)
                 ) {
                     // 说明
                     Text(

@@ -170,10 +170,15 @@ class OverlayWindow(
         if (sample.fps >= 0f) line(ITEM_FPS, String.format("FPS %5.1f  %5.1fms", sample.fps, sample.frameTimeMs))
         else line(ITEM_FPS, "FPS  --")
 
-        if (sample.cpuL > 0 || sample.cpuM > 0 || sample.cpuB > 0) {
-            line(ITEM_CPU, String.format("CPU %4d/%4d/%4dMHz %3.0f%%",
-                sample.cpuL, sample.cpuM, sample.cpuB, sample.cpuLoad))
-        } else line(ITEM_CPU, "CPU  --")
+        // 按 policy 显示所有簇，O1 的四簇不能压缩成三档。
+        val policies = sample.cpuPolicyIds.filter { it >= 0 }.distinct().sorted()
+        val freqs = if (policies.isNotEmpty()) policies.map { policy ->
+            sample.cpuPolicyIds.indices.filter { sample.cpuPolicyIds[it] == policy }
+                .maxOfOrNull { sample.perCoreFreqMhz.getOrNull(it) ?: -1 } ?: -1
+        } else listOf(sample.cpuL, sample.cpuM, sample.cpuB).filter { it > 0 }
+        val loadText = if (sample.cpuLoad >= 0) String.format("%.0f%%", sample.cpuLoad) else "--"
+        val freqText = freqs.joinToString("/") { if (it > 0) "$it" else "--" }
+        line(ITEM_CPU, if (freqs.isNotEmpty()) "CPU $freqText MHz  $loadText" else "CPU --  $loadText")
 
         // GPU 频率(无 root 读不到,显示 --)与占用(kgsl gpubusy 可读)
         if (sample.gpuLoad >= 0f) {
@@ -184,21 +189,22 @@ class OverlayWindow(
 
         // 电池温度 + 核心(SoC)温度
         val t = sample.batteryTemp
-        val soc = sample.maxSocTemp
+        val soc = sample.maxCpuTemp.takeIf { it >= 0 } ?: sample.maxSocTemp
         if (t > 0 || soc > 0) {
             val tb = if (t > 0) String.format("%.1f", t) else "--"
             val sb = if (soc > 0) String.format("%.1f", soc) else "--"
-            line(ITEM_TEMP, "电温 ${tb}C 芯温 ${sb}C")
+            line(ITEM_TEMP, "电温 ${tb}℃ 芯温 ${sb}℃")
         } else line(ITEM_TEMP, "温度 --")
 
         // 功耗(>1000mW 显示为 W)+ 电量
         val p = sample.powerMw
         val level = sample.batteryLevel
-        if (p > 0) {
+        val powerLabel = "电池"
+        if (p >= 0) {
             val pw = if (p > 1000) String.format("%.2fW", p / 1000f) else "${p}mW"
-            line(ITEM_POWER, if (level >= 0) "功耗 $pw  $level%" else "功耗 $pw")
+            line(ITEM_POWER, if (level >= 0) "$powerLabel $pw  $level%" else "$powerLabel $pw")
         } else if (level >= 0) line(ITEM_POWER, "电量 $level%")
-        else line(ITEM_POWER, "功耗 --")
+        else line(ITEM_POWER, "电池功率 --")
 
         if (sample.usedMemMb > 0) {
             line(ITEM_MEM, String.format("内存 %d/%dMB", sample.usedMemMb, sample.totalMemMb))

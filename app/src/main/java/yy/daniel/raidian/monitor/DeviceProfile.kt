@@ -28,7 +28,11 @@ class DeviceProfile private constructor(
     val romVersion: String,
     /** CPU 簇探测方式:由 [rom] 与 SoC 代际共同决定,采样层据此聚类 */
     val clusterProbe: ClusterProbe,
+    val socModel: String = safe(Build.SOC_MODEL),
+    val socManufacturer: String = safe(Build.SOC_MANUFACTURER),
 ) {
+    val isXring: Boolean get() = socManufacturer.contains("xring", true) ||
+        (socModel.equals("O1", true) && isHyperOs)
     /** 是否 ColorOS/OPPO 系(含 OnePlus/realme) */
     val isColorOs: Boolean get() = rom == RomFamily.COLOROS
     /** 是否 HyperOS/MIUI 系 */
@@ -42,7 +46,7 @@ class DeviceProfile private constructor(
 
     enum class ClusterProbe(val label: String) {
         /** 高通传统 3 簇(小米 13 Ultra 等):频率表聚类即可,每簇一张表 */
-        FREQ_TABLE("频率表聚类（传统 3 簇）"),
+        FREQ_TABLE("频率表聚类（按频率分档）"),
         /** 骁龙 8 Gen 3 等 4 簇 / 中核双 bin:必须按 cpu_capacity 归并后取 L/M/B */
         CAPACITY_8GEN3("cpu_capacity 聚类（4 簇双 bin）"),
         /** 未知:频率表聚类,但不强依赖前 3 簇顺序(旧行为) */

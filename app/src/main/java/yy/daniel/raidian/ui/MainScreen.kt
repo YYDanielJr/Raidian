@@ -6,6 +6,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +45,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberNavigationRailState
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.AppRecording
 import top.yukonga.miuix.kmp.icon.extended.Layers
@@ -61,6 +63,15 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            vm.setUiVisible(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+        }
+        lifecycle.addObserver(observer)
+        vm.setUiVisible(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+        onDispose { lifecycle.removeObserver(observer); vm.setUiVisible(false) }
+    }
     /** 悬浮窗权限是否已授予(决定实时页按钮可用性与提示) */
     val canOverlay = Settings.canDrawOverlays(context)
 
@@ -76,32 +87,30 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
         canScroll = { true }
     )
 
+    val backdrop = rememberUiBackdrop()
+    val blurSupported = isMiuixBlurSupported()
+
     val tablet = isTablet()
 
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
+            AdaptiveTopAppBar(
                 title = "实时监控",
+                modifier = Modifier.miuixTopBarBlur(backdrop),
+                color = if (blurSupported) Color.Transparent else MiuixTheme.colorScheme.surface,
                 largeTitle = "Raidian 性能监控器",
                 // subtitle = "Raidian · 性能监控",
                 titleColor = MiuixTheme.colorScheme.onSurface,
                 largeTitleColor = MiuixTheme.colorScheme.onSurface,
                 subtitleColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 actions = {
-                    // 平板:入口在左侧导航栏,顶栏不再重复放按钮(只保留少量空间)
-                    if (!tablet) {
-                        TopBarEntry(
-                            icon = { Icon(MiuixIcons.ListView, contentDescription = null, tint = MiuixTheme.colorScheme.onSurface) },
-                            label = "记录",
-                            onClick = { context.startActivity(Intent(context, RecordsActivity::class.java)) },
-                        )
-                        TopBarEntry(
-                            icon = { Icon(MiuixIcons.Settings, contentDescription = null, tint = MiuixTheme.colorScheme.onSurface) },
-                            label = "设置",
-                            onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
-                        )
-                    }
+                    // 设置入口(记录/续航/充电已移到 HomeScreen 的底部导航,这里只留设置)
+                    TopBarEntry(
+                        icon = { Icon(MiuixIcons.Settings, contentDescription = "设置", tint = MiuixTheme.colorScheme.onSurface) },
+                        label = "设置",
+                        onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
+                    )
                 },
                 titlePadding = 24.dp,
                 navigationIconPadding = 12.dp,
@@ -113,43 +122,16 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(if (blurSupported) Modifier.layerBackdrop(backdrop) else Modifier)
                 .nestedScroll(scrollBehavior.nestedScrollConnection),
         ) {
-            if (tablet) {
-                // 平板:左侧 NavigationRail 常驻导航(记录/设置),右侧实时内容
-                Row(modifier = Modifier.fillMaxSize().padding(padding)) {
-                    val railState = rememberNavigationRailState()
-                    NavigationRail(state = railState) {
-                        NavigationRailItem(
-                            selected = false,
-                            onClick = { context.startActivity(Intent(context, RecordsActivity::class.java)) },
-                            icon = MiuixIcons.ListView,
-                            label = "记录",
-                        )
-                        NavigationRailItem(
-                            selected = false,
-                            onClick = { context.startActivity(Intent(context, SettingsActivity::class.java)) },
-                            icon = MiuixIcons.Settings,
-                            label = "设置",
-                        )
-                    }
-                    LivePage(
-                        vm = vm,
-                        canOverlay = canOverlay,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxSize(),
-                    )
-                }
-            } else {
-                LivePage(
-                    vm = vm,
-                    canOverlay = canOverlay,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                )
-            }
+            // 导航(底部悬浮栏 / 平板侧栏)由 HomeScreen 负责,这里只画实时内容
+            LivePage(
+                vm = vm,
+                canOverlay = canOverlay,
+                contentPadding = padding,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
@@ -183,6 +165,7 @@ private fun androidx.compose.foundation.layout.RowScope.TopBarEntry(
 private fun LivePage(
     vm: MainViewModel,
     canOverlay: Boolean,
+    contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
     val last by vm.lastSample.collectAsState()
@@ -194,6 +177,9 @@ private fun LivePage(
     val watchTarget by vm.watchTarget.collectAsState()
     val context = LocalContext.current
     val tablet = isTablet()
+    val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { vm.startRecording() }
 
     // 宽屏整页内容限宽居中(平板横屏避免内容拉满整条,维持舒适阅读宽度)
     val contentMaxWidth = if (tablet) TabletContentMaxWidthDp.dp else Dp.Infinity
@@ -201,10 +187,11 @@ private fun LivePage(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(contentPadding),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().widthIn(max = contentMaxWidth)) {
+        Column(modifier = Modifier.widthIn(max = contentMaxWidth).fillMaxWidth()) {
         // 无悬浮窗权限时:顶部提示去授权
         if (!canOverlay) {
             SectionHeader("悬浮窗权限")
@@ -220,34 +207,10 @@ private fun LivePage(
             )
         }
 
-        // 设备环境 + 实时数据:平板两卡并排(信息密度),手机上下排列
-        if (tablet) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                // 左:设备环境
-                Column(modifier = Modifier.weight(1f)) {
-                    SectionHeader("设备环境")
-                    HyperCard {
-                        DeviceEnvCard()
-                    }
-                }
-                // 右:实时数据(九宫格)
-                Column(modifier = Modifier.weight(1f)) {
-                    SectionHeader("实时数据")
-                    HyperCard {
-                        SampleGrid(last)
-                    }
-                }
-            }
-        } else {
-            SectionHeader("设备环境")
-            HyperCard {
-                DeviceEnvCard()
-            }
-            SectionHeader("实时数据")
-            HyperCard {
-                SampleGrid(last)
-            }
-        }
+        SectionHeader("设备")
+        HyperCard { DeviceEnvCard() }
+        SectionHeader("实时数据")
+        HyperCard { SampleGrid(last) }
 
         // 实时曲线:近 2 分钟历史,显示项与颜色可在悬浮窗设置页配置(见 LiveChartPrefs)
         SectionHeader("实时曲线")
@@ -274,14 +237,20 @@ private fun LivePage(
                 "battery_temp" to Triple(sampleSeries(history.map { it.batteryTemp }), last.batteryTemp, "°C"),
                 "soc_temp" to Triple(sampleSeries(history.map { it.maxSocTemp }), last.maxSocTemp, "°C"),
                 "memory" to Triple(sampleSeries(history.map { it.usedMemMb.toFloat() }), last.usedMemMb.toFloat(), "MB"),
+                "gpu_temp" to Triple(sampleSeries(history.map { it.gpuTemp }), last.gpuTemp, "℃"),
+                "npu_temp" to Triple(sampleSeries(history.map { it.npuTemp }), last.npuTemp, "℃"),
+                "skin_temp" to Triple(sampleSeries(history.map { it.skinTemp }), last.skinTemp, "℃"),
             )
             // 多线序列(CPU 频率三簇 L/M/B)
-            val multiCpuFreq = listOf(
+            val xring = yy.daniel.raidian.monitor.DeviceProfile.detect().isXring
+            val policyCores = listOf(0, 2, 4, 8)
+            val multiCpuFreq = if (xring) policyCores.map { core -> sampleSeries(history.map { it.perCoreFreqMhz.getOrNull(core)?.toFloat() ?: -1f }) } else listOf(
                 sampleSeries(history.map { it.cpuL.toFloat() }),
                 sampleSeries(history.map { it.cpuM.toFloat() }),
                 sampleSeries(history.map { it.cpuB.toFloat() }),
             )
-            val cpuFreqCur = listOf(last.cpuL.toFloat(), last.cpuM.toFloat(), last.cpuB.toFloat())
+            val cpuFreqCur = if (xring) policyCores.map { last.perCoreFreqMhz.getOrNull(it)?.toFloat() ?: -1f }
+                else listOf(last.cpuL.toFloat(), last.cpuM.toFloat(), last.cpuB.toFloat())
 
             // 依次画启用项:手机单列;平板单值项两两并排(多线项整宽)
             val enabledItems = LiveChartPrefs.ALL.filter { LiveChartPrefs.isOn(context, it.key) }
@@ -393,7 +362,12 @@ private fun LivePage(
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
-                    onClick = { if (running) vm.stopRecording() else vm.startRecording() },
+                    onClick = {
+                        if (running) vm.stopRecording()
+                        else if (context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        else vm.startRecording()
+                    },
                     colors = ButtonDefaults.buttonColorsPrimary(),
                     modifier = Modifier.weight(1f)
                 ) {
@@ -401,6 +375,9 @@ private fun LivePage(
                 }
             }
         }
+
+        BackgroundSettingsRow()
+        HardwareDetails(last)
 
         // 悬浮窗开关 + 权限通道:平板两卡并排
         if (tablet) {
@@ -452,7 +429,8 @@ private fun LivePage(
                 ShizukuStatus(vm)
             }
         }
-        Spacer(Modifier.height(20.dp))
+        // 手机主页的悬浮导航覆盖在内容上：只在滚动末尾补安全空间，平时内容仍从栏下经过。
+        Spacer(Modifier.height(if (tablet) 20.dp else HomeFloatingNavContentPadding))
         } // 内层限宽 Column 结束
     } // 外层滚动 Column 结束
 }
@@ -464,7 +442,7 @@ private fun DeviceEnvCard() {
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         InfoRow("系统", profile.rom.label)
         InfoRow("机型", profile.model.ifBlank { profile.brand })
-        InfoRow("簇探测", profile.clusterProbe.label)
+        InfoRow("处理器", if (profile.isXring) "玄戒 O1" else profile.socModel.ifBlank { profile.socManufacturer })
         InfoRow(
             "版本", profile.romVersion.ifBlank {
                 "Android ${android.os.Build.VERSION.RELEASE}"
@@ -496,7 +474,7 @@ private fun LiveSingleChart(
     }
     val color = LiveChartPrefs.color(context, item.key)
     val (minY, maxY) = when (item.key) {
-        "fps" -> 0f to 120f
+        "fps" -> 0f to maxOf(120f, values.filterNotNull().maxOrNull() ?: 0f)
         "gpu_load" -> 0f to 100f
         "cpu_load" -> 0f to 100f
         else -> null to null
@@ -505,7 +483,7 @@ private fun LiveSingleChart(
 }
 
 /**
- * 实时曲线 · 多线指标(CPU 频率三簇小/中/大核),整宽展示。
+ * 实时曲线 · 多线指标(CPU 频率,按实际簇分档:小/中/大;2 簇设备无中核时只画两条)。
  */
 @Composable
 private fun LiveMultiChart(
@@ -515,18 +493,26 @@ private fun LiveMultiChart(
     timeX: List<String>?,
     context: android.content.Context,
 ) {
-    val colors = (0 until 3).map { si -> LiveChartPrefs.seriesColor(context, item.key, si) }
-    val hasAny = multiCpuFreq.any { line -> line.any { it != null } }
-    if (hasAny) {
+    // 过滤掉全空序列(如 2 簇设备的"中核"),标签/颜色/当前值同步裁剪
+    val fullLabels = item.series.map { it.label }
+    val activeIdx = multiCpuFreq.indices.filter { i ->
+        multiCpuFreq[i].any { it != null }
+    }
+    val colors = item.series.indices.map { si -> LiveChartPrefs.seriesColor(context, item.key, si) }
+    if (activeIdx.isNotEmpty()) {
+        val series = activeIdx.map { multiCpuFreq[it] }
+        val cur = activeIdx.map { cpuFreqCur[it] }
+        val labels = activeIdx.map { fullLabels[it] }
+        val actColors = activeIdx.map { colors[it] }
         MultiSeriesRow(
             label = item.label,
             unit = "MHz",
-            series = multiCpuFreq,
-            curValues = cpuFreqCur,
-            colors = colors,
+            series = series,
+            curValues = cur,
+            colors = actColors,
             minY = 0f,
             maxY = null,
-            seriesLabels = listOf("小核", "中核", "大核"),
+            seriesLabels = labels,
             xLabels = timeX,
         )
         Spacer(Modifier.height(8.dp))

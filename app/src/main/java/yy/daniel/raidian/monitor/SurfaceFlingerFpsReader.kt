@@ -42,19 +42,21 @@ class SurfaceFlingerFpsReader(
     @Volatile private var targetLayers: List<String> = emptyList()
     /** 最近一次解析层时对应的前台包名 */
     @Volatile private var lastPkg = ""
-    /** 被 SELinux 权限拒绝后置 true,此后一直返回 -1,避免反复打日志 */
+    /** 权限失败时短暂退避，后续授权恢复后仍可重试。 */
     @Volatile private var disabled = false
     /** 下次允许重新解析层的时间戳(退避用) */
     @Volatile private var nextResolveAtMs = 0L
+    private var resolvedAtMs = 0L
 
     /** 通用 FpsReader 接口实现:内部自行查询前台应用 */
     override fun readFps(): Float {
-        if (disabled) return -1f
+        if (disabled && android.os.SystemClock.elapsedRealtime() < nextResolveAtMs) return -1f
+        disabled = false
         return try {
             val (pkg, _) = kotlinx.coroutines.runBlocking { appState.readFrontApp() }
             readFpsForPkg(pkg)
         } catch (e: Exception) {
-            if (isPermissionDenied(e)) disabled = true
+            if (isPermissionDenied(e)) { disabled = true; nextResolveAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_DELAY_MS }
             -1f
         }
     }
@@ -69,7 +71,8 @@ class SurfaceFlingerFpsReader(
      *  - **-1** 读不到:没有解析到任何渲染层(前台是纯无渲染场景)或权限被拒。
      */
     fun readFpsForPkg(pkg: String): Float {
-        if (disabled) return -1f
+        if (disabled && android.os.SystemClock.elapsedRealtime() < nextResolveAtMs) return -1f
+        disabled = false
         return try {
             if (pkg.isNotEmpty() && pkg != lastPkg) {
                 // 前台应用变化:清缓存,立即重新解析
@@ -80,10 +83,11 @@ class SurfaceFlingerFpsReader(
             if (pkg.isEmpty()) return -1f
 
             // 1) 无候选 → 解析(受退避控制)
-            if (targetLayers.isEmpty()) {
-                val now = System.currentTimeMillis()
+            if (targetLayers.isEmpty() || android.os.SystemClock.elapsedRealtime() - resolvedAtMs > 5000) {
+                val now = android.os.SystemClock.elapsedRealtime()
                 if (now < nextResolveAtMs) return -1f
                 targetLayers = resolveLayers(pkg)
+                resolvedAtMs = now
                 if (targetLayers.isEmpty()) {
                     nextResolveAtMs = now + RETRY_DELAY_MS
                     return -1f
@@ -106,10 +110,10 @@ class SurfaceFlingerFpsReader(
             if (sawActiveNoFrame) return 0f
             // 全部候选都"层无效":可能层已重建(序号变了),清掉重解析一次(受退避保护)
             targetLayers = emptyList()
-            nextResolveAtMs = System.currentTimeMillis() + RETRY_DELAY_MS
+            nextResolveAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_DELAY_MS
             -1f
         } catch (e: Exception) {
-            if (isPermissionDenied(e)) disabled = true
+            if (isPermissionDenied(e)) { disabled = true; nextResolveAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_DELAY_MS }
             -1f
         }
     }
@@ -135,21 +139,23 @@ class SurfaceFlingerFpsReader(
         val ordered = mutableListOf<String>()
 
         // 方法1(主):全量 dumpsys 的 "Output Layer <name>" —— 当前活跃合成层
-        val out1 = run("dumpsys SurfaceFlinger 2>/dev/null | grep -E 'Output Layer.*${Regex.escape(pkg)}'")
+        val out1 = run("dumpsys -t 1 SurfaceFlinger 2>/dev/null | grep -F 'Output Layer' | grep -F '$pkg'")
         for (rawLine in out1.lines()) {
             val name = cleanLayerName(rawLine) ?: continue
             if (isRenderableLayer(name, pkg)) ordered.add(name)
         }
+        val active = rankCandidates(ordered)
+        ordered.clear()
 
         // 方法2(补):--list 里所有含包名层(Output Layer 之外的候选也收,去重)
-        val listOut = run("dumpsys SurfaceFlinger --list 2>/dev/null")
+        val listOut = run("dumpsys -t 1 SurfaceFlinger --list 2>/dev/null")
         for (rawLine in listOut.lines()) {
             val line = rawLine.trim()
             if (line.isEmpty() || !line.contains(pkg)) continue
             val name = cleanLayerName(line) ?: continue
             if (isRenderableLayer(name, pkg) && name !in ordered) ordered.add(name)
         }
-        return rankCandidates(ordered)
+        return (active + rankCandidates(ordered)).distinct().take(4)
     }
 
     /**
@@ -220,7 +226,7 @@ class SurfaceFlingerFpsReader(
     /**
      * 用 `--latency <layer>` 的帧时间戳算 FPS。
      * 输出:首行为 refresh period(ns),后续每行 "desired actual ready ...",
-     * 取 actual present(第 2 列,mkm/Scene 系信任列);列 2 无效时退用列 1。
+     * 只取 actual present(第 2 列)；desired 并不代表已上屏的帧。
      *
      * 返回语义:
      *  - Float > 0:有效帧率
@@ -230,7 +236,8 @@ class SurfaceFlingerFpsReader(
      *    由调用方换候选/重解析
      */
     private fun measureByLatency(layer: String): Float? {
-        val out = run("dumpsys SurfaceFlinger --latency '$layer' 2>/dev/null")
+        val quotedLayer = "'" + layer.replace("'", "'\\''") + "'"
+        val out = run("dumpsys -t 1 SurfaceFlinger --latency $quotedLayer 2>/dev/null")
         val timestamps = mutableListOf<Long>()
         // 帧记录行数:首行 refresh 之外的行(含全 0 行),用于判断层是否有效
         var recordRows = 0
@@ -240,10 +247,8 @@ class SurfaceFlingerFpsReader(
             if (parts.size >= 2) {
                 recordRows++
                 val actual = parts[1].toLongOrNull()
-                val desired = parts[0].toLongOrNull()
                 val ts = when {
                     actual != null && actual > 0 && actual != Long.MAX_VALUE -> actual
-                    desired != null && desired > 0 && desired != Long.MAX_VALUE -> desired
                     else -> null
                 }
                 if (ts != null) timestamps.add(ts)

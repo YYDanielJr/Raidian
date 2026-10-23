@@ -20,9 +20,8 @@ import yy.daniel.raidian.RaidianApp
  * 作为 specialUse 前台服务(见 AndroidManifest 的 foregroundServiceType),
  * 提供常驻通知,用户可从通知/系统界面手动停止。
  *
- * 注意(阶段二现状):当前主界面与 OverlayController 用 Application 级常驻
- * (进程存活即工作),本服务尚未被实际 start;若要让"后台记录"在进程被杀后仍
- * 可靠,需接入本服务 + START_STICKY(见 AGENTS.md 待办 #10)。
+ * 记录或浮窗启动时接入本服务，两者都停止后退出。系统杀进程后保留已写入的数据，
+ * 不自动创建空白记录或显示已恢复记录的通知。
  */
 class MonitorService : Service() {
     companion object {
@@ -44,6 +43,10 @@ class MonitorService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, MonitorService::class.java))
         }
+        fun stopIfIdle(context: Context) {
+            val app = RaidianApp.get(context)
+            if (!app.recorder.isRunning() && !app.overlayController.isShown()) stop(context)
+        }
     }
 
     /** 非绑定服务,不提供 binder */
@@ -58,7 +61,8 @@ class MonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 由宿主(RaidianApp/主界面)持有全局 recorder 单例并 start/stop
-        return START_STICKY
+        // 进程死亡后不能静默伪装成仍在记录；已 flush 的 CSV 仍可查看。
+        return START_NOT_STICKY
     }
 
     /** 服务被系统/用户停止时,若正在记录则停止记录,避免留下"半截"会话 */

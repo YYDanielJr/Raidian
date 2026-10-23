@@ -42,6 +42,7 @@ fun LineChart(
     showAxis: Boolean = true,
     xLabels: List<String>? = null,
 ) {
+    val axisColor = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurfaceVariantSummary
     Canvas(modifier = modifier) {
         if (size.width <= 0f || size.height <= 0f || values.isEmpty()) return@Canvas
 
@@ -54,7 +55,7 @@ fun LineChart(
         // 只取有效点(index, value)
         val pts = values.mapIndexedNotNull { i, v -> if (v != null) i to v else null }
         if (pts.isEmpty()) {
-            drawAxes(ax, plotW, plotH, 0f, 1f, xLabels)
+            drawAxes(ax, plotW, plotH, 0f, 1f, xLabels, axisColor)
             return@Canvas
         }
 
@@ -65,12 +66,12 @@ fun LineChart(
         val pad = if (minY == null && maxY == null) span * 0.08f else 0f
         val lo2 = (lo - pad).coerceAtMost(lo)
         val hi2 = (hi + pad).coerceAtLeast(hi)
-        val span2 = hi2 - lo2
+        val span2 = (hi2 - lo2).coerceAtLeast(1f)
 
         fun xOf(i: Int): Float = ax.left + plotW * i / (values.size - 1).coerceAtLeast(1)
         fun yOf(v: Float): Float = ax.top + plotH - (v - lo2) / span2 * plotH
 
-        drawAxes(ax, plotW, plotH, lo2, hi2, xLabels)
+        drawAxes(ax, plotW, plotH, lo2, lo2 + span2, xLabels, axisColor)
 
         // 连线(断点断开)
         val linePath = Path()
@@ -114,6 +115,7 @@ fun MultiLineChart(
     showAxis: Boolean = true,
     xLabels: List<String>? = null,
 ) {
+    val axisColor = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurfaceVariantSummary
     Canvas(modifier = modifier) {
         if (size.width <= 0f || size.height <= 0f || series.isEmpty()) return@Canvas
 
@@ -131,7 +133,7 @@ fun MultiLineChart(
         }
         val maxLen = series.maxOf { it.second.size }.coerceAtLeast(1)
         if (allPts.isEmpty()) {
-            drawAxes(ax, plotW, plotH, 0f, 1f, xLabels)
+            drawAxes(ax, plotW, plotH, 0f, 1f, xLabels, axisColor)
             return@Canvas
         }
         val lo = minY ?: allPts.min()
@@ -140,12 +142,12 @@ fun MultiLineChart(
         val pad = if (minY == null && maxY == null) span * 0.08f else 0f
         val lo2 = lo - pad
         val hi2 = hi + pad
-        val span2 = hi2 - lo2
+        val span2 = (hi2 - lo2).coerceAtLeast(1f)
 
         fun xOf(i: Int): Float = ax.left + plotW * i / (maxLen - 1).coerceAtLeast(1)
         fun yOf(v: Float): Float = ax.top + plotH - (v - lo2) / span2 * plotH
 
-        drawAxes(ax, plotW, plotH, lo2, hi2, xLabels)
+        drawAxes(ax, plotW, plotH, lo2, lo2 + span2, xLabels, axisColor)
 
         // 逐序列连线
         series.forEachIndexed { si, _ ->
@@ -191,6 +193,7 @@ private fun DrawScope.drawAxes(
     lo: Float,
     hi: Float,
     xLabels: List<String>?,
+    labelColor: Color,
 ) {
     val left = ax.left
     val top = ax.top
@@ -198,9 +201,8 @@ private fun DrawScope.drawAxes(
     val right = left + plotW
     val span = (hi - lo).takeIf { it > 0f } ?: 1f
 
-    val labelColor = ChartAxisDefaults.Label
-    val lineColor = ChartAxisDefaults.AxisLine
-    val gridColor = ChartAxisDefaults.Grid
+    val lineColor = labelColor.copy(alpha = 0.35f)
+    val gridColor = labelColor.copy(alpha = 0.15f)
     val textSizePx = 10.dp.toPx()
 
     // 构造文字画笔(每次 draw 调用创建可接受:图表数量有限)
@@ -251,4 +253,4 @@ private fun DrawScope.drawAxes(
 
 /** 把可空 Float 列表变成折线图可用值(-1 视为空/断点,null 原样透传) */
 fun sampleSeries(values: List<Float>): List<Float?> =
-    values.map { if (it < 0f) null else it }
+    values.map { if (!it.isFinite() || it < 0f) null else it }

@@ -39,31 +39,24 @@ class AppStateReader(
     suspend fun readFrontApp(): Pair<String, String> {
         return withContext(Dispatchers.IO) {
             try {
-                val selfPkg = context.packageName
-                // 方法1:RunningAppProcessInfo,过滤自身(悬浮窗/记录时自身常在前台)
-                val procs = am.runningAppProcesses ?: emptyList()
-                for (p in procs) {
-                    if (p.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
-                        val pkg = p.pkgList?.firstOrNull { it != selfPkg }
-                        if (pkg != null && pkg.isNotBlank()) {
-                            return@withContext pkg to labelOf(pkg)
-                        }
-                    }
-                }
-                // 方法2:经命令通道 dumpsys activity(需 Shizuku/shell 权限)
                 val exe = exec
-                if (exe != null) {
-                    val out = exe.execute(
-                        "dumpsys activity activities 2>/dev/null | grep -E 'topResumedActivity|mResumedActivity' | head -1"
-                    )
-                    val m = Regex("([A-Za-z][\\w.]*)/").find(out)
-                    val pkg2 = m?.groupValues?.get(1)?.takeIf {
-                        it != selfPkg && it.isNotBlank() && !it.startsWith("com.android.systemui")
-                    }
-                    if (pkg2 != null) return@withContext pkg2 to labelOf(pkg2)
+                if (exe?.shizuku?.available() == true) {
+                    // 平板多窗口优先跟随真正获得焦点的窗口；前台进程并不等于前台应用。
+                    val window = exe.execute("dumpsys -t 1 window 2>/dev/null | grep 'mCurrentFocus='")
+                    val pkg = Regex("([A-Za-z][\\w.]*)/").find(window)?.groupValues?.get(1)
+                    if (pkg != null) return@withContext pkg to labelOf(pkg)
+                    val activity = exe.execute("dumpsys -t 1 activity activities 2>/dev/null | grep 'topResumedActivity' | head -1")
+                    val fallback = Regex("([A-Za-z][\\w.]*)/").find(activity)?.groupValues?.get(1)
+                    if (fallback != null) return@withContext fallback to labelOf(fallback)
+                    return@withContext "" to ""
                 }
-                // 无其它前台,返回自身
-                selfPkg to labelOf(selfPkg)
+                // 未授权时只能知道自身是否可见，不能把其它进程猜成目标应用。
+                if (am.runningAppProcesses.orEmpty().any {
+                    it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND &&
+                        it.pkgList?.contains(context.packageName) == true
+                }) context.packageName to labelOf(context.packageName) else "" to ""
+
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: Exception) {
                 "" to ""
             }

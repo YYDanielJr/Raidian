@@ -46,6 +46,98 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** 采样历史(实时曲线数据源) */
     val history: StateFlow<List<Sample>> = overlayController.history
 
+    // ==================== 续航 / 充电曲线 ====================
+
+    /** 曲线记录控制器(Application 级常驻,每 30s 采样、每 5min 读系统 batterystats) */
+    val batteryCurves = raidian.batteryCurves
+
+    /** 续航实况(系统口径续航/亮屏时长 + 逐应用耗电 + 本周期曲线) */
+    val enduranceLive: StateFlow<yy.daniel.raidian.battery.EnduranceRecorder.Live> =
+        batteryCurves.endurance.live
+
+    /** 充电实况(当前/最近一次充电会话的曲线与统计) */
+    val chargingLive: StateFlow<yy.daniel.raidian.battery.ChargingRecorder.Live> =
+        batteryCurves.charging.live
+
+    /** 后台记录开关 */
+    val curveEnabled: StateFlow<Boolean> = batteryCurves.enabled
+
+    /** 系统统计是否可读(false = Shizuku 未授权,续航时长/每应用耗电拿不到,只剩本地曲线) */
+    val systemReadable: StateFlow<Boolean> = batteryCurves.systemReadable
+
+    /** 曲线历史一行(放电周期或充电会话;两个 meta 只会有一个非空) */
+    data class CurveItem(
+        val dir: File,
+        val cycle: yy.daniel.raidian.battery.BatteryCurveStore.CycleMeta? = null,
+        val charge: yy.daniel.raidian.battery.BatteryCurveStore.ChargeMeta? = null,
+        /** 周期最后一次采样里的系统口径续航时长 ms(历史列表摘要用;-1 无) */
+        val timeOnBatteryMs: Long = -1L,
+        /** 周期最后一次采样里的系统口径亮屏时长 ms */
+        val screenOnMs: Long = -1L,
+    ) {
+        val active: Boolean
+            get() = cycle?.let { it.endTs == 0L } ?: (charge?.endTs == 0L)
+    }
+
+    private val _cycles = MutableStateFlow<List<CurveItem>>(emptyList())
+
+    /** 放电周期历史(新 → 旧;第一条可能是"进行中"的当前周期) */
+    val cycles: StateFlow<List<CurveItem>> = _cycles.asStateFlow()
+
+    private val _chargeSessions = MutableStateFlow<List<CurveItem>>(emptyList())
+
+    /** 充电会话历史(新 → 旧) */
+    val chargeSessions: StateFlow<List<CurveItem>> = _chargeSessions.asStateFlow()
+
+    /** 刷新放电周期列表(顺带读每周期最后一个采样点,供列表摘要显示续航/亮屏时长) */
+    fun refreshCycles() {
+        viewModelScope.launch {
+            val store = batteryCurves.store
+            _cycles.value = withContext(Dispatchers.IO) {
+                store.listCycles().map { dir ->
+                    val last = store.readDrain(dir).lastOrNull()
+                    CurveItem(
+                        dir = dir,
+                        cycle = store.readCycleMeta(dir),
+                        timeOnBatteryMs = last?.timeOnBatteryMs ?: -1L,
+                        screenOnMs = last?.screenOnMs ?: -1L,
+                    )
+                }
+            }
+        }
+    }
+
+    /** 刷新充电会话列表 */
+    fun refreshChargeSessions() {
+        viewModelScope.launch {
+            val store = batteryCurves.store
+            _chargeSessions.value = withContext(Dispatchers.IO) {
+                store.listCharges().map { CurveItem(it, null, store.readChargeMeta(it)) }
+            }
+        }
+    }
+
+    /** 开关后台记录(写配置并立即生效) */
+    fun setCurveEnabled(v: Boolean) = batteryCurves.setEnabled(v)
+
+    /** 立即读一次系统 batterystats(进入曲线页 / 手动刷新) */
+    fun refreshSystemStats() = batteryCurves.refreshNow()
+
+    /** 删除若干周期/会话目录 */
+    fun deleteCurves(dirs: List<File>, charging: Boolean) {
+        if (dirs.isEmpty()) return
+        viewModelScope.launch {
+            val store = batteryCurves.store
+            withContext(Dispatchers.IO) { store.deleteDirs(dirs) }
+            if (charging) refreshChargeSessions() else refreshCycles()
+        }
+    }
+
+    /** 保留天数(0 = 不清理) */
+    fun keepDays(): Int = batteryCurves.prefs.keepDays()
+
+    fun setKeepDays(d: Int) = batteryCurves.prefs.setKeepDays(d)
+
     /** 会话列表的一行:目录 + 解析出的元数据(解析失败可为 null) */
     data class SessionItem(val dir: File, val meta: SessionMeta?)
 
@@ -69,6 +161,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val gpuLoad: List<Float>,
         /** 每逻辑核频率 MHz:下标 = 核号,元素为该核各采样点序列 */
         val perCoreFreq: List<List<Float>>,
+        val perCoreLoad: List<List<Float>> = emptyList(),
+        val perCoreTemp: List<List<Float>> = emptyList(),
+        val extraSeries: Map<String, List<Float>> = emptyMap(),
     )
 
     /** 手动刷新 Shizuku 授权状态(进入页面 / 授权回调后调用) */
@@ -158,7 +253,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val iGpuLoad = idx("gpu_load_pct")
                         val iBatt = idx("battery_temp_c"); val iCpuT = idx("max_cpu_temp_c")
                         val iPower = idx("power_mw")
-                        val coreIdx = (0 until Sample.MAX_CORES)
+                        val coreCount = header.mapNotNull { Regex("cpu(\\d+)_freq_mhz").matchEntire(it)?.groupValues?.get(1)?.toIntOrNull() }
+                            .maxOrNull()?.plus(1) ?: 0
+                        val coreIdx = (0 until coreCount)
                             .map { it to idx("cpu${it}_freq_mhz") }
                             .filter { it.second >= 0 }
                         // 断点:elapsed 跳变超过 2×采样间隔视为暂停段(曲线留白)
@@ -190,7 +287,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             }
                             prevElapsed = e
                         }
-                        SessionDetail(meta, elapsed, fps, batt, cpuT, power, load, gpuLoad, perCore)
+                        fun series(name: String): List<Float> {
+                            val col = idx(name)
+                            return rows.mapIndexed { index, row ->
+                                if (index > 0 && elapsed[index] - elapsed[index - 1] > gapNs) -1f
+                                else row.getOrNull(col)?.toFloatOrNull()?.takeIf { it.isFinite() } ?: -1f
+                            }
+                        }
+                        SessionDetail(meta, elapsed, fps, batt, cpuT, power, load, gpuLoad, perCore,
+                            perCoreLoad = (0 until coreCount).map { series("cpu${it}_load_pct") },
+                            perCoreTemp = (0 until coreCount).map { series("cpu${it}_temp_c") },
+                            extraSeries = listOf("gpu_temp_c", "npu_temp_c", "skin_temp_c", "thermal_status", "available_mem_mb", "swap_used_mb")
+                                .associateWith(::series))
                     }
                 }
             }
@@ -202,6 +310,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** UI 轮询是否在跑(Activity 存活期间 true,onCleared 置 false) */
     private var polling = false
+    @Volatile private var uiVisible = false
+    fun setUiVisible(visible: Boolean) { uiVisible = visible }
 
     /**
      * 主界面可见期间持续采样并发布到 [OverlayController],保证实时页数据
@@ -215,7 +325,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         polling = true
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             while (polling) {
-                if (!overlayController.shown.value) {
+                if (uiVisible && !overlayController.shown.value) {
                     try {
                         val s = raidian.sampler.sample(System.currentTimeMillis())
                         overlayController.publishSample(s)

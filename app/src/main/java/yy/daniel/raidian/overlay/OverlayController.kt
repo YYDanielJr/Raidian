@@ -57,6 +57,7 @@ class OverlayController(private val app: RaidianApp) {
         ov.enabledItems = prefs.enabledItems()
         ov.show()
         _shown.value = true
+        yy.daniel.raidian.monitor.MonitorService.start(app)
         startPolling()
     }
 
@@ -66,6 +67,7 @@ class OverlayController(private val app: RaidianApp) {
         _shown.value = false
         pollJob?.cancel()
         pollJob = null
+        yy.daniel.raidian.monitor.MonitorService.stopIfIdle(app)
     }
 
     /** 显示/隐藏切换(主界面按钮用) */

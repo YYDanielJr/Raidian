@@ -9,4 +9,5 @@ interface ICommandRunner {
     // 在提权进程内直接遍历读取热区(无 shell 子进程开销)
     String readThermalZones();
     void destroy();
+    String readHardwareSnapshot();
 }

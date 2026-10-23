@@ -39,13 +39,13 @@ fun SampleGrid(s: Sample) {
         "FPS" to (if (s.fps >= 0f) String.format("%.1f", s.fps) else "--"),
         "CPU占用" to fmt(s.cpuLoad, "%"),
         "GPU占用" to fmt(s.gpuLoad, "%"),
-        "CPU频率" to (if (s.cpuB > 0) "${s.cpuB}MHz" else "--"),
+        "CPU最高频率" to (s.perCoreFreqMhz.filter { it > 0 }.maxOrNull()?.let { "${it}MHz" } ?: "--"),
         "GPU频率" to (if (s.gpuFreq > 0) "${s.gpuFreq}MHz" else "--"),
-        "功耗" to (if (s.powerMw > 0) {
+        "电池净功率" to (if (s.powerMw >= 0) {
             if (s.powerMw > 1000) String.format("%.1fW", s.powerMw / 1000f) else "${s.powerMw}mW"
         } else "--"),
         "电池温度" to (if (s.batteryTemp > 0) String.format("%.1f°C", s.batteryTemp) else "--"),
-        "核心温度" to (if (s.maxSocTemp > 0) String.format("%.1f°C", s.maxSocTemp) else "--"),
+        "CPU最高温度" to (if (s.maxCpuTemp >= 0) String.format("%.1f°C", s.maxCpuTemp) else "--"),
         "内存" to (if (s.usedMemMb > 0) "${s.usedMemMb}MB" else "--"),
     )
 
@@ -73,6 +73,7 @@ fun SampleGrid(s: Sample) {
                     rowCells.forEach { (label, value) ->
                         DataCell(label, value, Modifier.weight(1f))
                     }
+                    repeat(columns - rowCells.size) { Spacer(Modifier.weight(1f)) }
                 }
                 if (ri < rows.size - 1) Spacer(Modifier.height(10.dp))
             }
@@ -220,6 +221,7 @@ fun DetailChart(
 
 /** 详情页多序列图:每逻辑核一条频率曲线(同簇同色系,标题注明核号) */
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 fun DetailMultiChart(
     title: String,
     perCore: List<List<Float>>,
@@ -240,7 +242,7 @@ fun DetailMultiChart(
         )
         Spacer(Modifier.height(4.dp))
         // 图例:核号 + 所属簇颜色
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             perCore.forEachIndexed { i, _ ->
                 Text("cpu$i", fontSize = 11.sp, color = palette.getOrNull(i) ?: Color.Gray)
             }
