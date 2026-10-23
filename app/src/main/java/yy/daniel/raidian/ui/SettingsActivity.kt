@@ -84,7 +84,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
     val context = LocalContext.current
     val prefs = vm.overlayPrefs
     val overlayShown by vm.overlayShown.collectAsState()
-    val canOverlay = Settings.canDrawOverlays(context)
+    val canOverlay by rememberOverlayPermission()
 
     // 页面内本地状态(初始取配置值,改动同步写配置)
     var enabled by remember { mutableStateOf(prefs.enabledItems()) }
@@ -107,7 +107,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
     }
 
     fun toggleOverlayOrGuide() {
-        if (canOverlay) {
+        if (Settings.canDrawOverlays(context)) {
             vm.overlayController.toggle()
         } else {
             context.startActivity(

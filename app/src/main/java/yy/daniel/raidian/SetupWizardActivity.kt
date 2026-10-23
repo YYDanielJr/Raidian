@@ -125,7 +125,7 @@ private fun SetupWizardScreen(firstRun: Boolean) {
     // ---- 实时状态(定时刷新:Shizuku 授权 / 悬浮窗权限都是去外部系统操作后返回)----
     var shizukuOk by remember { mutableStateOf(app.shizuku.available()) }
     var shizukuAlive by remember { mutableStateOf(app.shizuku.isBinderAlive()) }
-    var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    val overlayGranted by yy.daniel.raidian.ui.rememberOverlayPermission()
     val shizukuInstalled = remember { isShizukuInstalled(context) }
 
     LaunchedEffect(Unit) {
@@ -133,7 +133,6 @@ private fun SetupWizardScreen(firstRun: Boolean) {
             app.shizuku.refresh()
             shizukuOk = app.shizuku.available()
             shizukuAlive = app.shizuku.isBinderAlive()
-            overlayGranted = Settings.canDrawOverlays(context)
             delay(800)
         }
     }

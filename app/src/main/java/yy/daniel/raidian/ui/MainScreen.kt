@@ -73,7 +73,7 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
         onDispose { lifecycle.removeObserver(observer); vm.setUiVisible(false) }
     }
     /** 悬浮窗权限是否已授予(决定实时页按钮可用性与提示) */
-    val canOverlay = Settings.canDrawOverlays(context)
+    val canOverlay by rememberOverlayPermission()
 
     // 进页面:刷新 Shizuku 状态、启动 UI 级采样轮询(会话列表由记录页自行加载)
     LaunchedEffect(Unit) {
@@ -214,6 +214,16 @@ private fun LivePage(
 
         // 实时曲线:近 2 分钟历史,显示项与颜色可在悬浮窗设置页配置(见 LiveChartPrefs)
         SectionHeader("实时曲线")
+        androidx.compose.runtime.CompositionLocalProvider(LocalChartContext provides ChartContext(
+            elapsedMs = history.map { it.elapsedMs - (history.firstOrNull()?.elapsedMs ?: 0L) },
+            breakBefore = history.mapIndexed { i, point -> i > 0 && point.elapsedMs - history[i - 1].elapsedMs > 1500 },
+            source = "实时监控 · 打开时快照",
+            corePolicies = last.cpuPolicyIds,
+            coreMaxMhz = last.perCoreMaxMhz,
+            perCoreFreq = last.perCoreFreqMhz.indices.map { core ->
+                sampleSeries(history.map { it.perCoreFreqMhz.getOrNull(core)?.toFloat() ?: -1f })
+            },
+        )) {
         HyperCard {
             // x 轴时间标签(相对首点,mm:ss;点数太少返回 null 只画刻度)
             val t0 = history.firstOrNull()?.elapsedMs
@@ -286,6 +296,8 @@ private fun LivePage(
                     }
                 }
             }
+        }
+
         }
 
         // 会话记录:记录目标(列表行)+ 控制(状态/统计/开始停止)

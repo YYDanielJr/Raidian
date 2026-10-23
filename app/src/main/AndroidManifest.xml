@@ -78,6 +78,12 @@
             android:label="运行状态详情"
             android:theme="@style/Theme.Raidian" />
 
+        <activity
+            android:name=".ui.ChartDetailActivity"
+            android:exported="false"
+            android:label="曲线详情"
+            android:theme="@style/Theme.Raidian" />
+
         <!-- 记录目标选择页:主页"会话记录"卡点记录目标进入 -->
         <activity
             android:name=".ui.AppPickActivity"

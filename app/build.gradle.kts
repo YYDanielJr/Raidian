@@ -102,6 +102,7 @@
 //}
 import com.android.build.api.variant.FilterConfiguration
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -120,8 +121,8 @@ android {
         applicationId = "yy.daniel.raidian"
         minSdk = 33
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.4.0"
+        versionCode = 2
+        versionName = "0.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 //
@@ -158,7 +159,20 @@ android {
         }
     }
 
+    val releaseSigning = Properties().apply {
+        val localFile = rootProject.file("release-signing.properties")
+        if (localFile.isFile) localFile.inputStream().use { load(it) }
+    }
     signingConfigs {
+        if (!releaseSigning.getProperty("storePassword").isNullOrBlank() &&
+            !releaseSigning.getProperty("keyPassword").isNullOrBlank()) {
+            create("releaseLocal") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
         create("debugLocal") {
             storeFile = file("keystore/debug.keystore")
             storePassword = "raidian123"
@@ -169,6 +183,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("releaseLocal")
             /*
              * AGP 9.x 推荐方式：
              * 开启完整的应用优化。

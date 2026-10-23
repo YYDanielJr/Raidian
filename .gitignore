@@ -22,3 +22,6 @@ local.properties
 
 # 开源参考仓库(各自带 .git,可独立 git pull,不入本库)
 /references
+
+# 本机 release 签名凭据
+/release-signing.properties

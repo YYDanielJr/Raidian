@@ -164,6 +164,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val perCoreLoad: List<List<Float>> = emptyList(),
         val perCoreTemp: List<List<Float>> = emptyList(),
         val extraSeries: Map<String, List<Float>> = emptyMap(),
+        val corePolicies: List<Int> = emptyList(),
+        val coreMaxMhz: List<Int> = emptyList(),
+        val breakBefore: List<Boolean> = emptyList(),
     )
 
     /** 手动刷新 Shizuku 授权状态(进入页面 / 授权回调后调用) */
@@ -257,7 +260,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             .maxOrNull()?.plus(1) ?: 0
                         val coreIdx = (0 until coreCount)
                             .map { it to idx("cpu${it}_freq_mhz") }
-                            .filter { it.second >= 0 }
                         // 断点:elapsed 跳变超过 2×采样间隔视为暂停段(曲线留白)
                         val gapNs = (meta.intervalMs.takeIf { it > 0 } ?: 500L) * 2
 
@@ -269,12 +271,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val load = ArrayList<Float>(rows.size)
                         val gpuLoad = ArrayList<Float>(rows.size)
                         val perCore = coreIdx.map { ArrayList<Float>(rows.size) }
-                        var prevElapsed = -1L
                         for (r in rows) {
                             val e = r.getOrNull(iElapsed)?.toLongOrNull() ?: 0L
-                            // 断点:相对上一行时间跳变过大 → 在每条序列补 null(-1) 断开
-                            val gap = prevElapsed > 0 && e - prevElapsed > gapNs
-                            fun add(list: MutableList<Float>, v: Float) { list.add(if (gap) -1f else v) }
+                            // 保留每条真实读数，暂停段通过独立 breakBefore 标志断线
+                            fun add(list: MutableList<Float>, v: Float) { list.add(v) }
                             elapsed.add(e)
                             add(fps, r.getOrNull(iFps)?.toFloatOrNull() ?: -1f)
                             add(batt, r.getOrNull(iBatt)?.toFloatOrNull() ?: -1f)
@@ -285,16 +285,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             coreIdx.forEachIndexed { ci, (_, col) ->
                                 add(perCore[ci], r.getOrNull(col)?.toFloatOrNull() ?: -1f)
                             }
-                            prevElapsed = e
                         }
                         fun series(name: String): List<Float> {
                             val col = idx(name)
-                            return rows.mapIndexed { index, row ->
-                                if (index > 0 && elapsed[index] - elapsed[index - 1] > gapNs) -1f
-                                else row.getOrNull(col)?.toFloatOrNull()?.takeIf { it.isFinite() } ?: -1f
+                            return rows.map { row ->
+                                row.getOrNull(col)?.toFloatOrNull()?.takeIf { it.isFinite() } ?: -1f
                             }
                         }
+                        fun firstInt(name: String): Int = rows.asSequence().mapNotNull { it.getOrNull(idx(name))?.toIntOrNull() }
+                            .firstOrNull { it >= 0 } ?: -1
                         SessionDetail(meta, elapsed, fps, batt, cpuT, power, load, gpuLoad, perCore,
+                            corePolicies = (0 until coreCount).map { firstInt("cpu${it}_policy") },
+                            coreMaxMhz = (0 until coreCount).map { firstInt("cpu${it}_max_mhz") },
+                            breakBefore = elapsed.mapIndexed { i, t -> i > 0 && t - elapsed[i - 1] > gapNs },
                             perCoreLoad = (0 until coreCount).map { series("cpu${it}_load_pct") },
                             perCoreTemp = (0 until coreCount).map { series("cpu${it}_temp_c") },
                             extraSeries = listOf("gpu_temp_c", "npu_temp_c", "skin_temp_c", "thermal_status", "available_mem_mb", "swap_used_mb")

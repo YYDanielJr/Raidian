@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -79,11 +82,13 @@ private fun SessionDetailScreen(
         title = "会话详情",
         onBack = { (context.findActivity())?.finish() },
         content = { padding ->
-            SessionDetailContent(
-                detail = detail,
-                contentPadding = padding,
-                modifier = Modifier.fillMaxSize(),
-            )
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                SessionDetailContent(
+                    detail = detail,
+                    contentPadding = padding,
+                    modifier = Modifier.widthIn(max = 720.dp).fillMaxSize(),
+                )
+            }
         },
     )
 }
@@ -102,9 +107,7 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
  * 会话详情内容:元数据信息卡(时间/时长/帧率统计/均值)+ 四条曲线
  * (帧率/功耗/电池温度/核心温度)。数据来自 detail(openSession 加载)。
  *
- * 供两处使用:
- *  - SessionDetailActivity(手机点列表行跳转的全屏详情)
- *  - RecordsScreen 平板主从布局的右侧详情栏
+ * 手机和平板均通过 SessionDetailActivity 全屏打开。
  */
 @Composable
 fun SessionDetailContent(
@@ -160,7 +163,14 @@ fun SessionDetailContent(
 
             // 曲线区(各曲线独立判断;无有效点的不画)
             SectionHeader("曲线")
+            androidx.compose.runtime.CompositionLocalProvider(LocalChartContext provides ChartContext(
+                elapsedMs = detail.elapsed, breakBefore = detail.breakBefore,
+                source = "会话记录 · $target",
+                corePolicies = detail.corePolicies, coreMaxMhz = detail.coreMaxMhz,
+            )) {
             HyperCard {
+                Text("点击曲线查看详情", fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                Spacer(Modifier.height(12.dp))
                 // x 轴时间标签(整条曲线共用 detail.elapsed)
                 val xl = timeAxisLabels(detail.elapsed)
                 // 每核频率曲线(多序列叠加;有任一核数据才显示)
@@ -212,6 +222,7 @@ fun SessionDetailContent(
                     Text("本会话暂无有效曲线数据", fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 }
+            }
             }
         }
         Spacer(Modifier.height(20.dp))

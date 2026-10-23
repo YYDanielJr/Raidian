@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -163,101 +164,26 @@ fun RecordsScreen(
                 }
             },
             content = { padding ->
-                val tablet = isTablet()
-                // 平板当前正在查看详情的会话目录(主从布局用;null=未选)
-                var detailDir by remember { mutableStateOf<File?>(null) }
-                val detail by vm.sessionDetail.collectAsState()
-
-                if (tablet) {
-                    // ---- 平板:主从两栏 —— 左列表(固定 ~360dp) + 右详情 ----
-                    Row(modifier = Modifier.fillMaxSize().padding(padding)) {
-                        Box(
-                            modifier = Modifier
-                                .width(if (windowWidthDp() >= 900) 400.dp else 340.dp)
-                                .fillMaxHeight()
-                        ) {
-                            SessionListPage(
-                                vm = vm,
-                                selecting = selecting,
-                                selectedPaths = selected ?: emptySet(),
-                                // 平板点行 → 不跳 Activity,直接在此页加载右侧详情
-                                onOpen = { dir ->
-                                    detailDir = dir
-                                    vm.openSession(dir)
-                                },
-                                onLongPress = { path ->
-                                    if (selected == null) selected = setOf(path)
-                                    else selected = (selected ?: emptySet()) + path
-                                },
-                                onToggle = { path -> toggleSelect(path) },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                            // 多选态:底部中央红色删除按钮
-                            if (selecting) {
-                                DeleteFab(
-                                    onClick = { showDeleteDialog = true },
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 28.dp),
-                                )
-                            }
-                        }
-                        // 列表与详情间的细分隔线
-                        Box(
-                            Modifier
-                                .width(1.dp)
-                                .fillMaxHeight()
-                                .background(MiuixTheme.colorScheme.onSurfaceVariantActions.copy(alpha = 0.3f))
+                // 手机和平板统一全屏列表，点击后打开独立详情 Activity。
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    SessionListPage(
+                        vm = vm,
+                        selecting = selecting,
+                        selectedPaths = selected ?: emptySet(),
+                        onOpen = { dir -> context.startActivity(SessionDetailActivity.intent(context, dir)) },
+                        onLongPress = { path ->
+                            if (selected == null) selected = setOf(path)
+                            else selected = (selected ?: emptySet()) + path
+                        },
+                        onToggle = { path -> toggleSelect(path) },
+                        contentPadding = padding,
+                        modifier = Modifier.widthIn(max = 720.dp).fillMaxSize(),
+                    )
+                    if (selecting) {
+                        DeleteFab(
+                            onClick = { showDeleteDialog = true },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp),
                         )
-                        // 右侧详情栏:选中的会话详情(未选时占位提示)
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        ) {
-                            if (detail == null) {
-                                Column(
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center,
-                                ) {
-                                    Text(
-                                        "选择左侧一条会话查看详情",
-                                        fontSize = 14.sp,
-                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    )
-                                }
-                            } else {
-                                SessionDetailContent(detail = detail, modifier = Modifier.fillMaxSize())
-                            }
-                        }
-                    }
-                } else {
-                    // ---- 手机:全屏列表,点行进独立详情页 ----
-                    // 滚动视口保持全屏，首屏用 contentPadding 让出标题；上滑后内容可从
-                    // 标题栏后方经过，供 miuix-blur 捕获真实背景。
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        SessionListPage(
-                            vm = vm,
-                            selecting = selecting,
-                            selectedPaths = selected ?: emptySet(),
-                            onOpen = { dir -> context.startActivity(SessionDetailActivity.intent(context, dir)) },
-                            onLongPress = { path ->
-                                if (selected == null) selected = setOf(path)
-                                else selected = (selected ?: emptySet()) + path
-                            },
-                            onToggle = { path -> toggleSelect(path) },
-                            contentPadding = padding,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        if (selecting) {
-                            DeleteFab(
-                                onClick = { showDeleteDialog = true },
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .padding(bottom = 28.dp),
-                            )
-                        }
                     }
                 }
                 // 删除确认对话框:必须放在 content 槽内 —— Scaffold 在这里提供
@@ -286,11 +212,6 @@ fun RecordsScreen(
                                         .filter { selected?.contains(it.dir.absolutePath) == true }
                                         .map { it.dir }
                                     vm.deleteSessions(dirs)
-                                    // 平板主从布局:若删的是当前查看项,右侧详情一并清除
-                                    if (detailDir != null && dirs.any { it.absolutePath == detailDir?.absolutePath }) {
-                                        detailDir = null
-                                        vm.openSession(null)
-                                    }
                                     showDeleteDialog = false
                                     selected = null
                                 },

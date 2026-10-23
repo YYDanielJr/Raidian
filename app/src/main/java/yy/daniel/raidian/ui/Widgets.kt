@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontWeight
@@ -110,30 +111,39 @@ fun ChartRow(
     maxY: Float?,
     color: Color,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.width(76.dp)) {
-            Text(label, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-            Text(
-                text = if (current >= 0)
-                    if (unit == "W" || unit == "mW")
-                        if (current > 1000) String.format("%.2fW", current / 1000) else String.format("%.0fmW", current)
-                    else if (unit == "FPS") String.format("%.1f", current)
-                    else String.format("%.1f%s", current, unit)
-                else "--",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
+    val chartContext = LocalChartContext.current
+    val document = ChartDocument(label, unit,
+        listOf(ChartSeriesData(label, values, color.toArgb())),
+        chartContext.elapsedMs, chartContext.breakBefore, minY, maxY, chartContext.source)
+    ChartPreview(document) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.width(76.dp)) {
+                Text(label, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                Text(
+                    text = if (current >= 0)
+                        if (unit == "W" || unit == "mW")
+                            if (current > 1000) String.format("%.2fW", current / 1000) else String.format("%.0fmW", current)
+                        else if (unit == "FPS") String.format("%.1f", current)
+                        else String.format("%.1f%s", current, unit)
+                    else "--",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = color,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            LineChart(
+                values = values,
+                minY = minY,
+                maxY = maxY,
                 color = color,
+                showAxis = true,
+                elapsedMs = document.elapsedMs,
+                breakBefore = document.breakBefore,
+                xLabels = chartTimeLabels(document.elapsedMs),
+                modifier = Modifier.weight(1f).height(60.dp),
             )
         }
-        Spacer(Modifier.width(8.dp))
-        LineChart(
-            values = values,
-            minY = minY,
-            maxY = maxY,
-            color = color,
-            showAxis = true,
-            modifier = Modifier.weight(1f).height(60.dp),
-        )
     }
 }
 
@@ -150,34 +160,50 @@ fun MultiSeriesRow(
     maxY: Float? = null,
     xLabels: List<String>? = null,
 ) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.width(88.dp)) {
-                Text(label, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                // 当前值:每簇一行 "簇名 值"
-                seriesLabels.forEachIndexed { i, s ->
-                    val v = curValues.getOrNull(i) ?: -1f
-                    Text(
-                        text = if (v >= 0) String.format("%s %.0f%s", s, v, unit) else "$s --",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = colors.getOrNull(i) ?: Color.Gray,
-                    )
+    val chartContext = LocalChartContext.current
+    val detailSeries = if (unit == "MHz" && chartContext.perCoreFreq.isNotEmpty()) {
+        val palette = ChartColors.corePalette(chartContext.perCoreFreq.size)
+        chartContext.perCoreFreq.mapIndexed { core, values ->
+            ChartSeriesData("CPU $core", values, palette[core].toArgb(), core,
+                chartContext.corePolicies.getOrNull(core) ?: -1, chartContext.coreMaxMhz.getOrNull(core) ?: -1)
+        }
+    } else series.mapIndexed { i, values ->
+        ChartSeriesData(seriesLabels.getOrNull(i) ?: "序列 $i", values, (colors.getOrNull(i) ?: ChartColors.Power).toArgb())
+    }
+    val document = ChartDocument(label, unit, detailSeries, chartContext.elapsedMs,
+        chartContext.breakBefore, minY, maxY, chartContext.source)
+    ChartPreview(document) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.width(88.dp)) {
+                    Text(label, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    // 当前值:每簇一行 "簇名 值"
+                    seriesLabels.forEachIndexed { i, s ->
+                        val v = curValues.getOrNull(i) ?: -1f
+                        Text(
+                            text = if (v >= 0) String.format("%s %.0f%s", s, v, unit) else "$s --",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = colors.getOrNull(i) ?: Color.Gray,
+                        )
+                    }
                 }
+                Spacer(Modifier.width(8.dp))
+                val lines: List<Pair<String, List<Float?>>> = series.mapIndexed { i, v ->
+                    Pair(seriesLabels.getOrNull(i) ?: "s$i", v)
+                }
+                MultiLineChart(
+                    series = lines,
+                    colors = colors,
+                    minY = minY,
+                    maxY = maxY,
+                    showAxis = true,
+                    elapsedMs = document.elapsedMs,
+                    breakBefore = document.breakBefore,
+                    xLabels = chartTimeLabels(document.elapsedMs) ?: xLabels,
+                    modifier = Modifier.weight(1f).height(76.dp),
+                )
             }
-            Spacer(Modifier.width(8.dp))
-            val lines: List<Pair<String, List<Float?>>> = series.mapIndexed { i, v ->
-                Pair(seriesLabels.getOrNull(i) ?: "s$i", v)
-            }
-            MultiLineChart(
-                series = lines,
-                colors = colors,
-                minY = minY,
-                maxY = maxY,
-                showAxis = true,
-                xLabels = xLabels,
-                modifier = Modifier.weight(1f).height(76.dp),
-            )
         }
     }
 }
@@ -203,19 +229,29 @@ fun DetailChart(
     maxY: Float?,
     color: Color,
     xLabels: List<String>? = null,
+    elapsedMs: List<Long>? = null,
 ) {
-    Column {
-        Text(title, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Spacer(Modifier.height(4.dp))
-        LineChart(
-            values = values,
-            minY = minY,
-            maxY = maxY,
-            color = color,
-            showAxis = true,
-            xLabels = xLabels,
-            modifier = Modifier.fillMaxWidth().height(140.dp),
-        )
+    val chartContext = LocalChartContext.current
+    val times = elapsedMs ?: chartContext.elapsedMs
+    val document = ChartDocument(title, chartUnit(title),
+        listOf(ChartSeriesData(title, values, color.toArgb())),
+        times, chartContext.breakBefore, minY, maxY, chartContext.source)
+    ChartPreview(document) {
+        Column {
+            Text(title, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            Spacer(Modifier.height(4.dp))
+            LineChart(
+                values = values,
+                minY = minY,
+                maxY = maxY,
+                color = color,
+                showAxis = true,
+                elapsedMs = document.elapsedMs,
+                breakBefore = document.breakBefore,
+                xLabels = chartTimeLabels(document.elapsedMs) ?: xLabels,
+                modifier = Modifier.fillMaxWidth().height(140.dp),
+            )
+        }
     }
 }
 
@@ -227,24 +263,35 @@ fun DetailMultiChart(
     perCore: List<List<Float>>,
     xLabels: List<String>? = null,
 ) {
-    Column {
-        Text(title, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Spacer(Modifier.height(4.dp))
-        val series = perCore.mapIndexed { i, values -> "cpu$i" to sampleSeries(values) }
-        val palette = ChartColors.corePalette(perCore.size)
-        MultiLineChart(
-            series = series,
-            colors = palette,
-            minY = 0f,
-            showAxis = true,
-            xLabels = xLabels,
-            modifier = Modifier.fillMaxWidth().height(180.dp),
-        )
-        Spacer(Modifier.height(4.dp))
-        // 图例:核号 + 所属簇颜色
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            perCore.forEachIndexed { i, _ ->
-                Text("cpu$i", fontSize = 11.sp, color = palette.getOrNull(i) ?: Color.Gray)
+    val chartContext = LocalChartContext.current
+    val detailPalette = ChartColors.corePalette(perCore.size)
+    val document = ChartDocument(title, chartUnit(title),
+        perCore.mapIndexed { core, values -> ChartSeriesData("CPU $core", sampleSeries(values),
+            detailPalette[core].toArgb(), core, chartContext.corePolicies.getOrNull(core) ?: -1,
+            chartContext.coreMaxMhz.getOrNull(core) ?: -1) },
+        chartContext.elapsedMs, chartContext.breakBefore, minY = 0f, source = chartContext.source)
+    ChartPreview(document) {
+        Column {
+            Text(title, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            Spacer(Modifier.height(4.dp))
+            val series = perCore.mapIndexed { i, values -> "cpu$i" to sampleSeries(values) }
+            val palette = ChartColors.corePalette(perCore.size)
+            MultiLineChart(
+                series = series,
+                colors = palette,
+                minY = 0f,
+                showAxis = true,
+                elapsedMs = document.elapsedMs,
+                breakBefore = document.breakBefore,
+                xLabels = chartTimeLabels(document.elapsedMs) ?: xLabels,
+                modifier = Modifier.fillMaxWidth().height(180.dp),
+            )
+            Spacer(Modifier.height(4.dp))
+            // 图例:核号 + 所属簇颜色
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                perCore.forEachIndexed { i, _ ->
+                    Text("cpu$i", fontSize = 11.sp, color = palette.getOrNull(i) ?: Color.Gray)
+                }
             }
         }
     }
