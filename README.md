@@ -8,7 +8,7 @@ Raidian 是一款 Android 性能与电池监控工具，使用 Kotlin、Jetpack 
 
 名称来自《明日方舟》角色「电弧」（Raidian）。应用图标为以该角色为灵感、经 AI 生成并由维护者选定的插画。本项目是独立开发的工具，与《明日方舟》官方无隶属关系。
 
-当前版本：**0.5.2**（versionCode：5）。最低系统：**Android 13／API 33**。
+当前版本：**0.5.3**（versionCode：6）。最低系统：**Android 13／API 33**。
 
 ## 功能
 
@@ -151,10 +151,10 @@ keyPassword=REPLACE_WITH_YOUR_KEY_PASSWORD
 命令行构建产物位于 `app/build/outputs/apk/release/`，按 ABI 分包，不生成 universal APK：
 
 ```text
-Raidian_0.5.2_arm64-v8a_release.apk
-Raidian_0.5.2_armeabi-v7a_release.apk
-Raidian_0.5.2_x86_64_release.apk
-Raidian_0.5.2_x86_release.apk
+Raidian_0.5.3_arm64-v8a_release.apk
+Raidian_0.5.3_armeabi-v7a_release.apk
+Raidian_0.5.3_x86_64_release.apk
+Raidian_0.5.3_x86_release.apk
 ```
 
 IDE 签名向导可使用另选的输出目录，以构建完成提示为准。Release 开启 R8 优化与资源压缩；如果修改权限通道，还应验证 Release 下的服务启动和无线配对，不能只测 Debug。

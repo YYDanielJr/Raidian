@@ -648,3 +648,13 @@ CSV 行片段(单位已正确):
 - 版本为 0.5.2／versionCode 5。README 说明四种权限、记录／浮窗／电池曲线、读数限制、Android Studio 签名和命令行构建，逐项致谢直接依赖、随附组件及参考工程；同步扩展 THIRD_PARTY_NOTICES。当前源码实际 minSdk 为 33、Gradle Daemon JDK 为 25，优先于本文历史环境记录。
 - SPAKE2 Android 2.2.1 的 POM 标注 LGPL-3.0，不能与 LibADB 所选 Apache-2.0 混同。Raidian 自有代码尚未声明统一许可证，没有擅自添加许可。发布签名凭据与私钥保持本地，gitignore 补充私钥扩展名，保留已跟踪的 debug 专用密钥。
 - `:app:testDebugUnitTest :app:processReleaseResources` 通过，30 项测试无失败，四种 ABI 的 Release 合并 Manifest 均为 0.5.2／5。核对图标预览与文档本地链接。没有构建 Release APK、安装设备或推送 GitHub；用户将自行通过 Android Studio 构建及发布。
+
+### 同日：采集权限页排版
+
+- 用户反馈平板采集权限页缺少 HyperOS 视觉层级，按钮紧贴且正向操作为灰色。对照 Miuix 0.9.4 的 Button／TextField／Card 文档、示例与主页 HardwareDetails 卡片后，重排 `PrivilegeActivity.kt`，权限后端不变。
+- 共用主页 HyperCard／SectionHeader／HyperList：17sp Medium 卡片标题、20sp 状态标题、14sp／22sp 次级说明；说明到按钮 20dp，按钮之间 12dp，按钮最小高 48dp。刷新、复制、打开设置、配对及启动使用主题主色，停止和展开命令为次要操作。
+- 状态卡的刷新／停止在宽布局并排，窄布局或大字体纵排；权限选中态使用 Miuix RadioButton 勾选，忙碌时禁用模式切换。电脑启动命令默认收起，仍可直接复制或展开选择；无线模式分为开启调试、配对、启动三张卡，补充卡外灰字提示。
+- 端口最多五位、配对码六位，输入框使用数字键盘与完成操作；动作前收起键盘，配对码仍不写入 saved state。首页权限卡同步使用同一文字和按钮层级。
+- `:app:assembleRelease`（含 R8／lintVital）通过。核对与平板已安装 0.5.2 的签名一致后，使用同版本 Release 覆盖安装，未卸载或清除数据。实测四模式布局、复制反馈、命令展开收起、无线输入／禁用与启用、横竖屏与键盘避让。未发起配对或请求 root。
+- 测试后恢复电脑 ADB 模式，重新进入页面清除示例输入，自动旋转恢复 1、user_rotation 恢复 0、night 恢复 no。尝试系统 night yes 后该页面仍显示浅色，不能称为深色实测通过。测试前旧 runner 已因用户升级显示版本不匹配，本轮保留该状态，未重启采集服务。
+- 截图在忽略目录 `_shots/privilege-after-*.png`，其中修改前截图及键盘截图可能含命令信息，不公开。界面实测时版本为 0.5.2／5；随后应用户要求更新为 0.5.3／versionCode 6，将本轮界面改动与版本、文档一并提交到 `dev`。

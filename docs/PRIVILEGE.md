@@ -49,7 +49,7 @@ $env:GRADLE_USER_HOME = "$PWD/.gradle-home"
 设备端真实通道测试：
 
 ```text
-adb -P 15037 -s 设备序列号 install -r app/build/outputs/apk/debug/Raidian_0.5.2_x86_64_debug.apk
+adb -P 15037 -s 设备序列号 install -r app/build/outputs/apk/debug/Raidian_0.5.3_x86_64_debug.apk
 adb -P 15037 -s 设备序列号 install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 adb -P 15037 -s 设备序列号 shell am instrument -w -e class yy.daniel.raidian.PrivilegeIntegrationTest yy.daniel.raidian.test/androidx.test.runner.AndroidJUnitRunner
 ```
