@@ -133,7 +133,7 @@ class BatteryStateReader(private val context: Context) {
             val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             screenOn = pm.isInteractive
         } catch (e: Exception) {
-            // 读不到就按灭屏处理(只在无 Shizuku 时影响本地兜底估算)
+            // 读不到就按灭屏处理(只在默认权限 时影响本地兜底估算)
         }
 
         return State(

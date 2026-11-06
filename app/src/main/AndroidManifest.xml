@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Shizuku 提权通道(经 adb 或 Shizuku 应用授予) -->
-    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- 悬浮窗 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 前台服务:监控与悬浮窗 -->
@@ -119,14 +119,8 @@
             android:label="充电详情"
             android:theme="@style/Theme.Raidian" />
 
-        <!-- Shizuku binder 连接桥(必须,否则 app 无法发现 Shizuku 服务) -->
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <activity android:name=".ui.PrivilegeActivity" android:exported="false"
+            android:label="采集权限" android:theme="@style/Theme.Raidian" />
 
         <service
             android:name=".monitor.MonitorService"

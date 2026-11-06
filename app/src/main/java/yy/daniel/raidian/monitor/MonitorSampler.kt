@@ -27,18 +27,19 @@ class MonitorSampler(
     private var previousCpu = emptyMap<String, MetricsParser.CpuTimes>()
     private var cached: Sample? = null
     private var sampledAt = 0L
-    private var lastPrivilege = false
+    private var lastIdentity = ""
     private var knownCoreCount = 0
 
     suspend fun sample(elapsedMs: Long): Sample = withContext(Dispatchers.IO) {
         mutex.withLock {
             val now = SystemClock.elapsedRealtime()
-            val privileged = exec.shizuku?.available() == true
-            cached?.takeIf { now - sampledAt < 400 && privileged == lastPrivilege }?.let {
+            val identity = exec.identity
+            val privileged = exec.privileged
+            cached?.takeIf { now - sampledAt < 400 && identity == lastIdentity }?.let {
                 return@withLock it.copy(elapsedMs = elapsedMs)
             }
-            if (privileged != lastPrivilege) previousCpu = emptyMap()
-            lastPrivilege = privileged
+            if (identity != lastIdentity) previousCpu = emptyMap()
+            lastIdentity = identity
             val start = SystemClock.elapsedRealtime()
             val blocks = MetricsParser.blocks(safe("") { exec.readHardwareSnapshot() })
             val ids = MetricsParser.cpuIds(blocks["PRESENT"].orEmpty())
@@ -107,7 +108,7 @@ class MonitorSampler(
                     (mem.getValue("SwapTotal") - mem.getValue("SwapFree")).coerceAtLeast(0) else -1,
                 frontPkg = front.first, frontApp = front.second,
                 wifiRxBytes = net[0], wifiTxBytes = net[1], mobileRxBytes = net[2], mobileTxBytes = net[3],
-                sampleDurationMs = SystemClock.elapsedRealtime() - start, privileged = privileged,
+                sampleDurationMs = SystemClock.elapsedRealtime() - start, privileged = privileged && exec.privileged,
             ).also { cached = it; sampledAt = SystemClock.elapsedRealtime() }
         }
     }

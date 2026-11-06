@@ -30,7 +30,7 @@ import java.io.File
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val raidian = app as RaidianApp
 
-    val shizuku = raidian.shizuku
+    val privileges = raidian.privileges
     val recorder = raidian.recorder
     val overlayController: OverlayController = raidian.overlayController
 
@@ -62,7 +62,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** 后台记录开关 */
     val curveEnabled: StateFlow<Boolean> = batteryCurves.enabled
 
-    /** 系统统计是否可读(false = Shizuku 未授权,续航时长/每应用耗电拿不到,只剩本地曲线) */
+    /** 系统统计是否可读(false = 未连接采集服务,续航时长/每应用耗电拿不到,只剩本地曲线) */
     val systemReadable: StateFlow<Boolean> = batteryCurves.systemReadable
 
     /** 曲线历史一行(放电周期或充电会话;两个 meta 只会有一个非空) */
@@ -169,8 +169,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val breakBefore: List<Boolean> = emptyList(),
     )
 
-    /** 手动刷新 Shizuku 授权状态(进入页面 / 授权回调后调用) */
-    fun refreshShizuku() = shizuku.refresh()
+    /** 手动刷新 ADB 或 root 授权状态(进入页面 / 授权回调后调用) */
+    fun refreshPrivileges() { viewModelScope.launch { privileges.refresh() } }
 
     // ---- 指定应用记录(门控) ----
 
@@ -321,7 +321,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * 不依赖悬浮窗是否显示。Activity 销毁时由 onCleared 停止。
      *
      * 悬浮窗显示时跳过本轮:此时 OverlayController 自身在轮询并推送同源数据,
-     * 避免两个循环并发打满 Shizuku 通道(binder 串行,并发会互相排队)。
+     * 避免两个循环并发打满 采集服务通道（请求串行,并发会互相排队)。
      */
     fun startUiPolling() {
         if (polling) return

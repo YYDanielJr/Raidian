@@ -98,7 +98,7 @@ fun EnduranceScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel
                             "曲线点数" to "${live.sampleCount}",
                             "电池容量" to if (live.capacityMah > 0) "${live.capacityMah} mAh" else "--",
                             "系统统计" to when {
-                                !readable -> "不可读（需 Shizuku 授权）"
+                                !readable -> "不可读（需 ADB 或 root 授权）"
                                 live.sysStatsTs > 0 -> "已更新 ${fmtClock(live.sysStatsTs)}"
                                 else -> "等待首次读取"
                             },
@@ -110,7 +110,7 @@ fun EnduranceScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel
                     HyperCard {
                         EmptyHint(
                             "总续航时长 / 亮屏时长 / 每应用耗电来自系统 `dumpsys batterystats`，" +
-                                "需要 Shizuku 授权才能读取。未授权时仍会记录本机电量与功耗曲线。"
+                                "需要 ADB 或 root 授权才能读取。未授权时仍会记录本机电量与功耗曲线。"
                         )
                     }
                 }
@@ -161,7 +161,7 @@ fun EnduranceScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel
                     HyperCard {
                         EmptyHint(
                             if (readable) "暂无逐应用统计（读取系统统计后出现）"
-                            else "需要 Shizuku 授权后才能读取系统逐应用耗电统计"
+                            else "需要 ADB 或 root 授权后才能读取系统逐应用耗电统计"
                         )
                     }
                 } else {
@@ -327,7 +327,7 @@ fun CycleDetailContent(
 
         SectionHeader("应用耗电")
         if (apps.isEmpty()) {
-            HyperCard { EmptyHint("该周期没有逐应用统计（当时可能未授权 Shizuku）。") }
+            HyperCard { EmptyHint("该周期没有逐应用统计（当时可能未授权 ADB 或 root）。") }
         } else {
             HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                 apps.take(30).forEach { (uid, info) ->

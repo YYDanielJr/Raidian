@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
  *
  * 前台应用识别优先级:
  *  1. ActivityManager.RunningAppProcessInfo(快、无 shell,过滤自身进程)
- *  2. dumpsys activity(经 Shizuku/CommandExecutor,更准确,能看到顶层 Activity 归属)
+ *  2. dumpsys activity(经采集服务/CommandExecutor,更准确,能看到顶层 Activity 归属)
  *
  * 用途:会话记录的开始按钮(SessionRecorder.start 的目标应用)、
  * 以及决定 FPS 应该去读哪个应用的 SurfaceFlinger 渲染层。
@@ -40,7 +40,7 @@ class AppStateReader(
         return withContext(Dispatchers.IO) {
             try {
                 val exe = exec
-                if (exe?.shizuku?.available() == true) {
+                if (exe?.privileged == true) {
                     // 平板多窗口优先跟随真正获得焦点的窗口；前台进程并不等于前台应用。
                     val window = exe.execute("dumpsys -t 1 window 2>/dev/null | grep 'mCurrentFocus='")
                     val pkg = Regex("([A-Za-z][\\w.]*)/").find(window)?.groupValues?.get(1)

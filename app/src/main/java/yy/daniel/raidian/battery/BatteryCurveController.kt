@@ -49,7 +49,7 @@ class BatteryCurvePrefs(context: Context) {
  * 协程作用域上,与任何 Activity 生命周期无关 —— 切后台/灭屏后仍在记录,这正是
  * "记录一整轮放电"所必需的。进程被系统回收后由前台服务([BatteryCurveService])拉起。
  *
- * 一个循环驱动两个记录器(避免各自去抢 Shizuku binder):
+ * 一个循环驱动两个记录器(避免各自去抢 采集服务通道):
  *  - 每 30s:读电池状态 → [ChargingRecorder] + [EnduranceRecorder]
  *  - 每 5min:`dumpsys batterystats` → 系统口径续航/亮屏时长 + 逐 UID 耗电
  */
@@ -74,7 +74,7 @@ class BatteryCurveController(
     private val _enabled = MutableStateFlow(prefs.enabled())
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
 
-    /** 最近一次系统统计(为 null = 还没读到,通常是 Shizuku 未授权) */
+    /** 最近一次系统统计(为 null = 还没读到,通常是 未连接采集服务) */
     private val _systemStats = MutableStateFlow<BatteryStatsParser.SystemBatteryStats?>(null)
     val systemStats: StateFlow<BatteryStatsParser.SystemBatteryStats?> = _systemStats.asStateFlow()
 
@@ -156,7 +156,7 @@ class BatteryCurveController(
         }
     }
 
-    /** 读一次 `dumpsys batterystats` 并分发(需要 Shizuku;无授权时系统统计缺失,本地曲线仍继续) */
+    /** 读一次 `dumpsys batterystats` 并分发(需要 ADB 或 root;无授权时系统统计缺失,本地曲线仍继续) */
     private suspend fun readSystemStats() {
         val out = executor.execute(BatteryStatsParser.CMD)
         if (out.isBlank()) {

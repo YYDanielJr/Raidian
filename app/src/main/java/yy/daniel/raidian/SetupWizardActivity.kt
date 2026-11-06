@@ -30,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -77,14 +78,14 @@ import yy.daniel.raidian.ui.SectionHeader
  *
  * 向导共 6 步,按权限 → 偏好的顺序:
  *  0 欢迎         应用说明与将要完成的设置项
- *  1 Shizuku 授权 核心:未运行 → 引导打开 Shizuku;已运行未授权 → 请求授权
+ *  1 采集权限     默认权限 / 无线 ADB / 电脑 ADB / root
  *  2 悬浮窗权限   未授予 → 去系统设置授权
  *  3 悬浮窗设置   悬浮窗显示项 + 触摸穿透
  *  4 实时曲线     主页实时曲线显示哪些指标
  *  5 完成         状态汇总 + 开始使用
  *
  * 本页不依赖 MainViewModel(它是 Activity 级),直接读 Application 级后端
- * (RaidianApp 的 shizuku / overlayController),与主页同源。
+ * (RaidianApp 的 privileges / overlayController),与主页同源。
  */
 class SetupWizardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -122,20 +123,10 @@ private fun SetupWizardScreen(firstRun: Boolean) {
     // ---- 当前步骤(0..PAGE_COUNT-1)----
     var page by remember { mutableIntStateOf(0) }
 
-    // ---- 实时状态(定时刷新:Shizuku 授权 / 悬浮窗权限都是去外部系统操作后返回)----
-    var shizukuOk by remember { mutableStateOf(app.shizuku.available()) }
-    var shizukuAlive by remember { mutableStateOf(app.shizuku.isBinderAlive()) }
+    // ---- 实时状态(定时刷新:ADB 或 root 授权 / 悬浮窗权限都是去外部系统操作后返回)----
+    val access by app.privileges.state.collectAsState()
+    val accessReady = access.connected
     val overlayGranted by yy.daniel.raidian.ui.rememberOverlayPermission()
-    val shizukuInstalled = remember { isShizukuInstalled(context) }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            app.shizuku.refresh()
-            shizukuOk = app.shizuku.available()
-            shizukuAlive = app.shizuku.isBinderAlive()
-            delay(800)
-        }
-    }
 
     // ---- 悬浮窗偏好(向导内调整即写配置,与设置页同源)----
     var enabledItems by remember { mutableStateOf(app.overlayController.prefs.enabledItems()) }
@@ -209,13 +200,10 @@ private fun SetupWizardScreen(firstRun: Boolean) {
                 ) {
                     when (p) {
                         0 -> WelcomePage()
-                        1 -> ShizukuPage(
-                            installed = shizukuInstalled,
-                            alive = shizukuAlive,
-                            ok = shizukuOk,
-                            onOpenManager = { openShizukuManager(context) },
-                            onRequest = { app.shizuku.requestPermission() },
-                        )
+                        1 -> {
+                            PageHeading("采集权限", "可使用默认权限，或通过无线 ADB、电脑 ADB、root 启动内置采集服务。无需安装 Shizuku。")
+                            HyperCard { yy.daniel.raidian.ui.PrivilegeStatusCard(app.privileges) }
+                        }
                         2 -> OverlayPermissionPage(
                             granted = overlayGranted,
                             onGrant = { openOverlayPermission(context) },
@@ -230,7 +218,7 @@ private fun SetupWizardScreen(firstRun: Boolean) {
                         )
                         4 -> ChartPrefsPage()
                         5 -> FinishPage(
-                            shizukuOk = shizukuOk,
+                            accessReady = accessReady,
                             overlayGranted = overlayGranted,
                             itemCount = enabledItems.count { it in OverlayWindow.ALL_ITEMS },
                         )
@@ -359,11 +347,11 @@ private fun WelcomePage() {
     PageHeading(
         title = "欢迎使用 Raidian",
         description = "Raidian 在游戏等应用上层显示实时帧率、占用、温度与功耗，也可以把一段运行过程记录下来生成曲线报告。" +
-            "核心数据需要 Shizuku 提权读取，请按顺序完成以下几步授权与偏好设置，大约需要一分钟。",
+            "部分系统数据需要 ADB 或 root 权限，可按需要完成授权与偏好设置。",
     )
     SectionHeader("本向导将完成")
     HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-        InfoRow("Shizuku 授权", "提权通道，用于读取帧率、功耗、温度等系统数据")
+        InfoRow("采集权限", "选择默认权限、无线 ADB、电脑 ADB 或 root")
         InfoRow("悬浮窗权限", "把监控浮窗叠加到游戏等应用上层")
         InfoRow("显示偏好", "选择悬浮窗显示项与主页实时曲线指标")
     }
@@ -375,73 +363,7 @@ private fun WelcomePage() {
     )
 }
 
-// ==================== 步骤 1:Shizuku 授权 ====================
-
-@Composable
-private fun ShizukuPage(
-    installed: Boolean,
-    alive: Boolean,
-    ok: Boolean,
-    onOpenManager: () -> Unit,
-    onRequest: () -> Unit,
-) {
-    PageHeading(
-        title = "授权 Shizuku",
-        description = "Shizuku 提供 adb 级提权通道，Raidian 通过它读取帧率、温度与功耗等数据。" +
-            "若设备上还没有 Shizuku，请先安装并启动服务，再回到本页完成授权。",
-    )
-    SectionHeader("当前状态")
-    HyperCard {
-        when {
-            ok -> StatusRow("已授权，可以读取系统数据", ok = true)
-            alive -> StatusRow("Shizuku 已运行，尚未向 Raidian 授权", ok = false)
-            installed -> StatusRow("Shizuku 未运行", ok = false)
-            else -> StatusRow("未检测到 Shizuku 应用", ok = false)
-        }
-        when {
-            ok -> {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = "授权后本应用会自动连接提权通道，无需其它操作。",
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-            alive -> {
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = onRequest,
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("请求授权", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                }
-            }
-            else -> {
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = onOpenManager,
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = if (installed) "打开 Shizuku" else "去安装 Shizuku",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                if (!installed) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "未检测到 Shizuku 应用。请从应用商店或 GitHub 发布页安装 Shizuku，安装后回到本页继续。",
-                        fontSize = 13.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                }
-            }
-        }
-    }
-}
+// ==================== 步骤 1:ADB 或 root 授权 ====================
 
 // ==================== 步骤 2:悬浮窗权限 ====================
 
@@ -565,7 +487,7 @@ private fun ChartPrefsPage() {
 
 @Composable
 private fun FinishPage(
-    shizukuOk: Boolean,
+    accessReady: Boolean,
     overlayGranted: Boolean,
     itemCount: Int,
 ) {
@@ -577,8 +499,8 @@ private fun FinishPage(
         ListMainText("状态汇总")
         Spacer(Modifier.height(12.dp))
         StatusRow(
-            text = if (shizukuOk) "Shizuku:已授权" else "Shizuku:未授权（无法读取系统数据）",
-            ok = shizukuOk,
+            text = if (accessReady) "采集服务：已连接" else "采集服务：使用默认权限",
+            ok = accessReady,
         )
         Spacer(Modifier.height(10.dp))
         StatusRow(
@@ -588,9 +510,9 @@ private fun FinishPage(
         Spacer(Modifier.height(10.dp))
         ListSecondaryText("悬浮窗显示项:已启用 $itemCount 项")
     }
-    if (!shizukuOk) {
+    if (!accessReady) {
         Text(
-            text = "提示:记录会话、读取帧率与温度等功能依赖 Shizuku，建议先授权再开始使用。",
+            text = "默认权限可记录电池与部分硬件数据。跨应用帧率等系统信息需要 ADB 或 root 权限。",
             fontSize = 13.sp,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
@@ -599,23 +521,6 @@ private fun FinishPage(
 }
 
 // ==================== 外部跳转辅助 ====================
-
-/** 是否已安装 Shizuku(v13 后管理器包名 moe.shizuku.manager;旧版另有 privileged.api) */
-private fun isShizukuInstalled(context: Context): Boolean {
-    val pm = context.packageManager
-    return pm.getLaunchIntentForPackage("moe.shizuku.privileged.api") != null ||
-        pm.getLaunchIntentForPackage("moe.shizuku.manager") != null
-}
-
-/** 打开 Shizuku 管理器(找不到则不做任何事) */
-private fun openShizukuManager(context: Context) {
-    val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-        ?: context.packageManager.getLaunchIntentForPackage("moe.shizuku.manager")
-    if (intent != null) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-    }
-}
 
 /** 跳转悬浮窗授权设置页;个别机型无包名入口时兜底到通用悬浮窗管理页 */
 private fun openOverlayPermission(context: Context) {

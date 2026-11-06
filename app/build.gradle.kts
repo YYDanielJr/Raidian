@@ -1,105 +1,3 @@
-//import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-//
-//plugins {
-//    alias(libs.plugins.android.application)
-//    alias(libs.plugins.kotlin.compose)
-//    alias(libs.plugins.kotlin.serialization)
-//}
-//
-//android {
-//    namespace = "yy.daniel.raidian"
-//    compileSdk {
-//        version = release(37)
-//    }
-//
-//    defaultConfig {
-//        applicationId = "yy.daniel.raidian"
-//        minSdk = 26
-//        targetSdk = 37
-//        versionCode = 1
-//        versionName = "0.1.1"
-//
-//        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-//    }
-//
-//    signingConfigs {
-//        create("debugLocal") {
-//            storeFile = file("keystore/debug.keystore")
-//            storePassword = "raidian123"
-//            keyAlias = "raidian"
-//            keyPassword = "raidian123"
-//        }
-//    }
-//
-//    buildTypes {
-//        release {
-//            optimization {
-//                enable = false
-//            }
-//        }
-//        debug {
-//            // 使用项目内 keystore,避免依赖 SDK 目录可写性(沙箱限制)
-//            signingConfig = signingConfigs.getByName("debugLocal")
-//        }
-//    }
-//    compileOptions {
-//        sourceCompatibility = JavaVersion.VERSION_17
-//        targetCompatibility = JavaVersion.VERSION_17
-//    }
-//    buildFeatures {
-//        compose = true
-//        aidl = true
-//    }
-//    packaging {
-//        resources {
-//            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-//        }
-//    }
-//}
-//
-//kotlin {
-//    compilerOptions {
-//        jvmTarget.set(JvmTarget.JVM_17)
-//    }
-//}
-//
-//dependencies {
-//    implementation(platform(libs.androidx.compose.bom))
-//    implementation(libs.androidx.activity.compose)
-//    implementation(libs.androidx.compose.material3)
-//    implementation(libs.androidx.compose.ui)
-//    implementation(libs.androidx.compose.ui.graphics)
-//    implementation(libs.androidx.compose.ui.tooling.preview)
-//    implementation(libs.androidx.core.ktx)
-//    implementation(libs.androidx.lifecycle.runtime.ktx)
-//    implementation(libs.androidx.lifecycle.runtime.compose)
-//    implementation(libs.androidx.lifecycle.viewmodel.compose)
-//
-//    // Miuix - HyperOS 风格 Compose 组件库(KMP,坐标 top.yukonga.miuix.kmp)
-//    implementation(libs.miuix.ui)
-//    implementation(libs.miuix.core)
-//    implementation(libs.miuix.icons)
-//
-//    // Miuix OverlayDialog 内部无条件调用 NavigationBackHandler,需要
-//    // LocalNavigationEventDispatcherOwner 宿主;该依赖需在此显式声明才能
-//    // 在编译期使用 rememberNavigationEventDispatcherOwner(见 AGENTS.md #13)
-//    implementation(libs.androidx.navigationevent.compose)
-//
-//    // Shizuku 提权 API
-//    implementation(libs.shizuku.api)
-//    implementation(libs.shizuku.provider)
-//
-//    // 数据序列化(记录存储)
-//    implementation(libs.kotlinx.serialization.json)
-//
-//    testImplementation(libs.junit)
-//    androidTestImplementation(platform(libs.androidx.compose.bom))
-//    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-//    androidTestImplementation(libs.androidx.espresso.core)
-//    androidTestImplementation(libs.androidx.junit)
-//    debugImplementation(libs.androidx.compose.ui.test.manifest)
-//    debugImplementation(libs.androidx.compose.ui.tooling)
-//}
 import com.android.build.api.variant.FilterConfiguration
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
@@ -121,8 +19,8 @@ android {
         applicationId = "yy.daniel.raidian"
         minSdk = 33
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.4.1"
+        versionCode = 3
+        versionName = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 //
@@ -184,6 +82,7 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("releaseLocal")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             /*
              * AGP 9.x 推荐方式：
              * 开启完整的应用优化。
@@ -287,9 +186,10 @@ dependencies {
     // Navigation Event
     implementation(libs.androidx.navigationevent.compose)
 
-    // Shizuku
-    implementation(libs.shizuku.api)
-    implementation(libs.shizuku.provider)
+    // AOSP wireless pairing and TLS transport; Apache-2.0 option, see THIRD_PARTY_NOTICES.md.
+    implementation(project(":libadb"))
+    implementation("org.conscrypt:conscrypt-android:2.5.3")
+    implementation("org.bouncycastle:bcpkix-jdk15to18:1.81")
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)

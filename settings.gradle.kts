@@ -17,6 +17,9 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        maven("https://jitpack.io") {
+            content { includeGroupByRegex("com\\.github\\.MuntashirAkon.*") }
+        }
         google {
             content {
                 excludeGroupByRegex("top\\.yukonga\\.miuix\\.kmp.*")
@@ -28,3 +31,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Raidian"
 include(":app")
+include(":libadb")
+project(":libadb").projectDir = file("third_party/libadb")

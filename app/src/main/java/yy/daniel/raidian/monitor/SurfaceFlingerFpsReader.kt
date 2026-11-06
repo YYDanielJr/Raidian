@@ -1,7 +1,7 @@
 package yy.daniel.raidian.monitor
 
 /**
- * 跨应用 FPS 读取:经命令通道(shell/Shizuku 身份)读 SurfaceFlinger。
+ * 跨应用 FPS 读取:经命令通道(shell/root 身份)读 SurfaceFlinger。
  *
  * 算法(FPS-Meter-Android / mkm 同思路,详见 references/scene-alternatives):
  *  1. 用 `dumpsys SurfaceFlinger --list` 找前台应用对应的可渲染 layer;
@@ -19,7 +19,7 @@ package yy.daniel.raidian.monitor
  *  - 层名里的 `#19010` 序号会随 Activity/Surface 重建变化,所以层失效后要重新
  *    解析;每个采样周期解析会拖慢节奏,失败后按 [RETRY_DELAY_MS] 退避。
  *
- * 权限:实测 `dumpsys SurfaceFlinger` 在 shell 身份可读,只要 Shizuku 授权即可,
+ * 权限:实测 `dumpsys SurfaceFlinger` 在 shell 身份可读,只要 ADB 或 root 授权即可,
  * 无需 root(对比:`service call SurfaceFlinger 1013` 被拒)。
  */
 class SurfaceFlingerFpsReader(

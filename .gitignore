@@ -25,3 +25,6 @@ local.properties
 
 # 本机 release 签名凭据
 /release-signing.properties
+
+# Local privilege validation logs
+/build-privilege*.log

@@ -78,7 +78,7 @@ private fun HardwareDetailScreen(
         }
     }
     LaunchedEffect(vm) {
-        vm.refreshShizuku()
+        vm.refreshPrivileges()
         vm.startUiPolling()
     }
     val sample by vm.lastSample.collectAsStateWithLifecycle()

@@ -31,8 +31,8 @@ class XringSamplingTest {
         progress("start")
         val app = context.applicationContext as RaidianApp
         assumeTrue(DeviceProfile.detect().isXring)
-        app.shizuku.refresh()
-        assertTrue("请先在 Shizuku 授权 Raidian", app.shizuku.available())
+        app.privileges.refresh()
+        assertTrue("请先启动 Raidian 的 ADB 或 root 服务", app.privileges.connected)
         val game = "com.hypergryph.endfield"
         val launcher = context.packageManager.getLaunchIntentForPackage(game)
         assumeTrue(launcher != null)

@@ -77,7 +77,7 @@ fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
 
     // 进页面:刷新 Shizuku 状态、启动 UI 级采样轮询(会话列表由记录页自行加载)
     LaunchedEffect(Unit) {
-        vm.refreshShizuku()
+        vm.refreshPrivileges()
         vm.startUiPolling()
     }
 
@@ -415,7 +415,7 @@ private fun LivePage(
                 Column(modifier = Modifier.weight(1f)) {
                     SectionHeader("权限通道")
                     HyperCard {
-                        ShizukuStatus(vm)
+                        AccessStatus(vm)
                     }
                 }
             }
@@ -438,7 +438,7 @@ private fun LivePage(
             }
             SectionHeader("权限通道")
             HyperCard {
-                ShizukuStatus(vm)
+                AccessStatus(vm)
             }
         }
         // 手机主页的悬浮导航覆盖在内容上：只在滚动末尾补安全空间，平时内容仍从栏下经过。
@@ -557,48 +557,7 @@ private fun TipCard(text: String, onClick: () -> Unit) {
     }
 }
 
-/**
- * Shizuku 状态卡:未运行 → 引导打开 Shizuku 管理器;运行未授权 → 请求授权按钮。
- */
 @Composable
-private fun ShizukuStatus(vm: MainViewModel) {
-    val available = vm.shizuku.available()
-    val context = LocalContext.current
-    Column {
-        Text(
-            text = when {
-                !vm.shizuku.isBinderAlive() -> "Shizuku 未运行"
-                !available -> "Shizuku 已运行，未授权"
-                else -> "Shizuku 已授权"
-            },
-            style = MiuixTheme.textStyles.body1,
-            color = if (available) MiuixTheme.colorScheme.primary
-            else MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
-
-        if (!available) {
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = {
-                    if (vm.shizuku.isBinderAlive()) {
-                        vm.shizuku.requestPermission() // 弹 Shizuku 授权对话框
-                    } else {
-                        openShizukuManager(context) // 引导去装/开 Shizuku
-                    }
-                }, colors = ButtonDefaults.buttonColorsPrimary(), modifier = Modifier.weight(1f)) {
-                    Text(if (vm.shizuku.isBinderAlive()) "请求授权" else "打开 Shizuku", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                }
-            }
-        }
-    }
-}
-
-/** 用系统包管理器找 Shizuku 应用并打开(找不到则无操作) */
-private fun openShizukuManager(context: android.content.Context) {
-    val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-        ?: context.packageManager.getLaunchIntentForPackage("moe.shizuku.manager")
-    if (intent != null) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-    }
+private fun AccessStatus(vm: MainViewModel) {
+    PrivilegeStatusCard(vm.privileges)
 }

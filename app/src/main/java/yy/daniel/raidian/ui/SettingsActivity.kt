@@ -285,6 +285,7 @@ private fun SettingsBody(
             }
         }
 
+        PrivilegeSettingsRow()
         BackgroundSettingsRow()
         when (tab) {
             // ---------- Tab 0:实时曲线设置 ----------

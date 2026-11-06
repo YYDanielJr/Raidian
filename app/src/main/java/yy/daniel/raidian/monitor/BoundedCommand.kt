@@ -5,8 +5,8 @@ import java.util.concurrent.TimeUnit
 /** Both app fallback and runner commands have the same timeout and bounded output. */
 object BoundedCommand {
     data class Result(val output: String, val exitCode: Int)
-    fun run(command: String, timeoutMs: Long = 4000): Result {
-        val process = ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start()
+    fun run(command: String, timeoutMs: Long = 4000, shell: List<String> = listOf("sh", "-c")): Result {
+        val process = ProcessBuilder(shell + command).redirectErrorStream(true).start()
         val output = StringBuilder()
         val reader = Thread {
             try {

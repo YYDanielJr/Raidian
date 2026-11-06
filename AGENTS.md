@@ -1,7 +1,7 @@
 # Raidian — 阶段性总结与后续开发指引
 
 > 本文件是给后续 AI 智能体(agent)的阶段交接文档。请先完整阅读,再继续开发。
-> 最近更新:2026-10-23（玄戒 O1 与小米平板 7S Pro，见第 8 节；先前设备结论不可直接套用 O1）
+> 最近更新:2026-11-06（内置权限通道见第 10 节；O1 数据源约束继续适用）
 
 ## 1. 项目目标
 
@@ -602,3 +602,19 @@ CSV 行片段(单位已正确):
 - 实时曲线点选、横向拖动和 CPU 列表纵向滚动通过；充电功率详情显示真实时间、W 单位和统计，横竖屏重建保持详情状态。
 - 权限回归在保留数据前提下重新运行向导：临时撤回悬浮窗权限，确认首页／引导未授权提示；在系统设置重新授权，完成向导后返回原首页，提示消失，浮窗成功显示和隐藏。未通过清空数据重新走全新安装流程。
 - 验证后恢复原悬浮窗授权、关闭测试浮窗、恢复自动旋转，保留用户开启的电池曲线记录服务。设备安装版本确认为 0.4.1／versionCode 2，非 debuggable；本次进程没有 AndroidRuntime 崩溃记录。
+
+## 10. 2026-11-06：内置默认／无线 ADB／电脑 ADB／root 通道
+
+本轮用户明确要求支持 root，取代第 1 节历史上的「不做 root」限制。工作区原先干净，沿用 `dev` 分支。Shizuku API、Provider、UserService 与 AIDL 已移除。
+
+- `privilege/PrivilegeManager` 为 Application 级权限状态源，`CommandExecutor` 统一路由；默认模式明确使用应用 UID，服务断开时降级。`MonitorSampler` 按通道身份重置 CPU 差分／缓存，数据源和单位契约不变。
+- 无线配对用固定版 LibADB 3.1.1 源码模块 `third_party/libadb`，选择 Apache-2.0 授权选项，见 `THIRD_PARTY_NOTICES.md`。补齐连接／握手超时、失败清理、OPEN 丢失唤醒与私有身份缓存问题；原生 Conscrypt／SPAKE2 ARM64 均为 16 KiB LOAD 对齐。
+- `RunnerServer.main` 用安装目录 APK 经 `nohup setsid app_process` 运行；ADB UID 2000、root UID 0。采用 abstract Unix socket、双向 SO_PEERCRED 校验及应用安装级随机凭据，不开放 TCP 监听、不提供导出的执行命令组件、不改 SELinux。
+- ADB 私钥及安装凭据放 `noBackupFilesDir`。电脑页面命令含安装凭据，不可记录到公开日志／文档。服务握手检查 APK 修改时间，更新后需停止旧服务并重启；设备重启后需重新启动。
+- `LocalSocket` 必须先 connect 再设置 soTimeout，否则 Android 实机抛 `socket not created`。无线 shell 使用短暂宽限等待启动子进程脱离 PTY；最后以认证握手确认成功，不以流结束当作服务就绪。
+- 新增独立 `PrivilegeActivity`，主页／设置／向导统一进入；四模式、无线配对／自动发现／手动端口、电脑命令复制、root 启动、刷新／停止。KernelSU 可能需要用户先去管理器手动允许，不能承诺一定弹授权框。
+- targetSdk 37 保持不变；Android 17 自动发现前申请 `ACCESS_LOCAL_NETWORK`，拒绝后保留手动端口入口。尚未在 Android 17 真机验证。
+- JVM 24 项测试通过；MuMu Android 15／x86_64 完成默认、电脑 ADB、root、真实无线配对、保存密钥后重连、NSD 自动发现。用户手动在 KernelSU 允许了 Raidian。四项通道／UI 回归通过，8.361 秒记录落盘 14 点；不能将模拟器缺失的 CPU／GPU 节点当作真实手机适配结论。
+- debug、androidTest、release（R8／lintVital）构建通过。新入口及反射使用的 Conscrypt 类型需保留 proguard 规则，不能只验证 debug。
+- MuMu ADB 为 `127.0.0.1:16384`，主机 adb 端口仍为 15037。模拟器曾无响应，重启并临时切 DirectX；已恢复原 Vulkan 配置，下次启动生效，没有清除数据。用户偏好尽量不用 computer use，后续优先 ADB／instrumentation。
+- 完整设计、构建命令、已验证范围及真机清单见 `docs/PRIVILEGE.md`。应用户要求，版本更新为 0.5.0／versionCode 3，并将本轮内置权限通道改动提交至 Git。

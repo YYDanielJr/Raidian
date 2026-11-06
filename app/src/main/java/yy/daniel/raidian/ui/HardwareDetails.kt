@@ -123,7 +123,7 @@ private fun RuntimeOverview(sample: Sample) {
     HardwareInfoRow("热状态", thermal.getOrNull(sample.thermalStatus) ?: "未提供")
     HardwareInfoRow("可用内存", if (sample.availableMemMb >= 0) "${sample.availableMemMb} MB" else "--")
     HardwareInfoRow("交换区已用", if (sample.swapUsedMb >= 0) "${sample.swapUsedMb} MB" else "--")
-    HardwareInfoRow("采集状态", if (sample.privileged) "Shizuku · ${sample.sampleDurationMs} ms" else "基础采集，等待 Shizuku 授权")
+    HardwareInfoRow("采集状态", if (sample.privileged) "ADB 或 root · ${sample.sampleDurationMs} ms" else "基础采集，等待 ADB 或 root 授权")
 }
 
 @Composable
