@@ -1,7 +1,7 @@
 # Raidian — 阶段性总结与后续开发指引
 
 > 本文件是给后续 AI 智能体(agent)的阶段交接文档。请先完整阅读,再继续开发。
-> 最近更新:2026-11-06（内置权限通道见第 10 节；O1 数据源约束继续适用）
+> 最近更新:2026-11-06（内置权限通道见第 10 节；小米平板 Release 实测及 IPC 修复见第 11 节；O1 数据源约束继续适用）
 
 ## 1. 项目目标
 
@@ -609,7 +609,7 @@ CSV 行片段(单位已正确):
 
 - `privilege/PrivilegeManager` 为 Application 级权限状态源，`CommandExecutor` 统一路由；默认模式明确使用应用 UID，服务断开时降级。`MonitorSampler` 按通道身份重置 CPU 差分／缓存，数据源和单位契约不变。
 - 无线配对用固定版 LibADB 3.1.1 源码模块 `third_party/libadb`，选择 Apache-2.0 授权选项，见 `THIRD_PARTY_NOTICES.md`。补齐连接／握手超时、失败清理、OPEN 丢失唤醒与私有身份缓存问题；原生 Conscrypt／SPAKE2 ARM64 均为 16 KiB LOAD 对齐。
-- `RunnerServer.main` 用安装目录 APK 经 `nohup setsid app_process` 运行；ADB UID 2000、root UID 0。采用 abstract Unix socket、双向 SO_PEERCRED 校验及应用安装级随机凭据，不开放 TCP 监听、不提供导出的执行命令组件、不改 SELinux。
+- `RunnerServer.main` 用安装目录 APK 经 `nohup setsid app_process` 运行；ADB UID 2000、root UID 0。初版采用 abstract Unix socket、双向 SO_PEERCRED 校验及应用安装级随机凭据；小米平板实测后 ADB 通信已改为认证回环 TCP，详见第 11 节。不提供导出的执行命令组件、不改 SELinux。
 - ADB 私钥及安装凭据放 `noBackupFilesDir`。电脑页面命令含安装凭据，不可记录到公开日志／文档。服务握手检查 APK 修改时间，更新后需停止旧服务并重启；设备重启后需重新启动。
 - `LocalSocket` 必须先 connect 再设置 soTimeout，否则 Android 实机抛 `socket not created`。无线 shell 使用短暂宽限等待启动子进程脱离 PTY；最后以认证握手确认成功，不以流结束当作服务就绪。
 - 新增独立 `PrivilegeActivity`，主页／设置／向导统一进入；四模式、无线配对／自动发现／手动端口、电脑命令复制、root 启动、刷新／停止。KernelSU 可能需要用户先去管理器手动允许，不能承诺一定弹授权框。
@@ -618,3 +618,26 @@ CSV 行片段(单位已正确):
 - debug、androidTest、release（R8／lintVital）构建通过。新入口及反射使用的 Conscrypt 类型需保留 proguard 规则，不能只验证 debug。
 - MuMu ADB 为 `127.0.0.1:16384`，主机 adb 端口仍为 15037。模拟器曾无响应，重启并临时切 DirectX；已恢复原 Vulkan 配置，下次启动生效，没有清除数据。用户偏好尽量不用 computer use，后续优先 ADB／instrumentation。
 - 完整设计、构建命令、已验证范围及真机清单见 `docs/PRIVILEGE.md`。应用户要求，版本更新为 0.5.0／versionCode 3，并将本轮内置权限通道改动提交至 Git。
+
+## 11. 2026-11-06：小米平板 7S Pro 的 Release 非 root 回归
+
+用户连接 `0B83147005901540`，明确要求自主测试 root 以外的通道。设备为 Android 16／SDK 36。原安装 0.4.1 Release，使用同签名 0.5.0／versionCode 3 覆盖升级，全程没有卸载、清数据或改装 debug。原有鸣潮与终末地两条历史会话均保留。
+
+### 真机发现与修复
+
+- **MuMu 的 Unix socket 成功不能外推真机。** 平板的 shell runner 已启动，但应用连接返回 `java.io.IOException: Permission denied`。ADB 改为只绑定 `127.0.0.1` 的 TCP 服务；root 保持原 Unix socket／SO_PEERCRED／协议版本 2，本次没有请求或测试 root。
+- ADB 协议版本 3：安装级 256 位随机凭据、双向随机挑战 HMAC-SHA256，绑定应用 UID／shell 身份／协议／角色。每次连接只处理一个请求；请求与响应分别使用本次挑战派生的密钥验证整个消息，防止端口抢占者中继认证后替换命令。凭据不在网络中发送。TCP 无 SO_PEERCRED，不能声称由内核验证对端 UID；实际入口仍检查 Process.myUid 为 2000／0。
+- 限定 8 个本机候选端口，认证读超时 1 秒；消息大小有界，已发送的操作不重试。错误凭据、篡改请求在真机被拒绝，之后合法请求仍正常；故意执行 sleep 10 在约 4.022 秒超时，后续命令可继续执行。
+- HyperOS 设置不支持分屏，但 Raidian 支持小窗。通过系统小窗保留配对码对话框，完成 Release 自身的 SPAKE2 配对；系统配对列表出现 Raidian。文案已增加小窗说明。不要切走系统配对页后继续使用过期端口。
+
+### 已验证范围
+
+- 默认权限显示基础数据；电脑 ADB 命令启动实际 shell UID 2000；无线真实配对、手动连接端口、NSD 自动发现、保存身份后重连通过。强制停止应用后可重连存活服务，停止服务后默认降级，重新启动后恢复。
+- 关闭无线调试后服务和后台采集继续工作。再次连接已关闭的端口可失败降级，应用可继续操作。覆盖安装后显示「应用已更新，请停止旧服务后重新启动」，停止并执行新命令后恢复。
+- 十核／四 policy、38 个 Current HAL 温区恢复；O1 GPU 频率／占用仍缺失，不伪造零。没有更改采集路径或单位换算。
+- 使用已安装《明日方舟》的启动动画场景验证跨应用采集，没有操作登录／购买／游戏进度。纯后台会话 1 分 08 秒、124 点，120 个有效帧率窗口；CPU 8 曲线 124 有效／0 缺失。悬浮窗＋记录会话 1 分 01 秒、106 点，106 个有效帧率窗口、均值约 59.4 FPS。不是战斗场景或长时间压力测试。
+- 验证依靠已安装 Release UI、进程身份、系统日志和认证 runner；没有用 debug 的数据读取能力替代 Release。记录详情和曲线重开验证实际持久化，未直接导出应用私有 CSV。
+- 30 项 JVM 测试通过（新增 6 项认证／消息完整性测试），Release／R8／lintVital 通过，收尾未见 AndroidRuntime 错误。
+- 原记录目标 `com.kurogame.mingchao` 已卸载，本次改为「跟随当前前台应用」；由失效目标产生的空测试会话已删除，两段有效测试会话保留。测试结束已关闭悬浮窗和录制，无线调试恢复关闭；保留原电池曲线前台服务及可用的电脑 ADB 采集服务。
+- 本地证据在忽略目录 `_shots/`：`tablet-runner-validation.json`、`tablet-session-detail.xml`、`tablet-session-cpu.xml`、`tablet-overlay-session-detail.xml`、`tablet-game-overlay.png`。其中 UI 原始转储可能含安装凭据，不得提交或公开。
+- Android 17、实体设备重启后的恢复、错误有效配对码和数小时稳定性尚未验证。后续应用户要求，本次修复更新为 0.5.1／versionCode 4，并提交到 `dev`。图标方案等待用户选择，选定后再生成 Release APK。

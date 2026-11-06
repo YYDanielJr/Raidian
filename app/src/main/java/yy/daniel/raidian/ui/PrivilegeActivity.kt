@@ -138,7 +138,7 @@ private fun PrivilegeScreen() {
                         Text("命令包含本次安装的连接凭据，请勿分享。适用于 PowerShell、命令提示符、macOS 和 Linux 终端。应用更新后请停止旧服务，再复制新命令。")
                     }
                     AccessMode.WIRELESS_ADB -> HyperCard {
-                        Text("在开发者选项中开启「无线调试」。建议分屏打开本页与系统设置，再选择「使用配对码配对设备」。配对端口与连接端口不同，请勿混用。")
+                        Text("在开发者选项中开启「无线调试」。用分屏或小窗让本页与系统设置同时可见，再选择「使用配对码配对设备」。系统设置不支持分屏时，可将 Raidian 放入小窗。配对端口与连接端口不同，请勿混用。")
                         Button(onClick = {
                             runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
                         }, modifier = Modifier.fillMaxWidth()) { Text("打开开发者选项") }

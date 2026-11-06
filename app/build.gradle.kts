@@ -19,8 +19,8 @@ android {
         applicationId = "yy.daniel.raidian"
         minSdk = 33
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.5.0"
+        versionCode = 4
+        versionName = "0.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 //
