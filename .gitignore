@@ -25,6 +25,10 @@ local.properties
 
 # 本机 release 签名凭据
 /release-signing.properties
+# Private signing keys; the shared debug key is intentionally tracked.
+*.jks
+*.keystore
+!/app/keystore/debug.keystore
 
 # Local privilege validation logs
 /build-privilege*.log

@@ -641,3 +641,10 @@ CSV 行片段(单位已正确):
 - 原记录目标 `com.kurogame.mingchao` 已卸载，本次改为「跟随当前前台应用」；由失效目标产生的空测试会话已删除，两段有效测试会话保留。测试结束已关闭悬浮窗和录制，无线调试恢复关闭；保留原电池曲线前台服务及可用的电脑 ADB 采集服务。
 - 本地证据在忽略目录 `_shots/`：`tablet-runner-validation.json`、`tablet-session-detail.xml`、`tablet-session-cpu.xml`、`tablet-overlay-session-detail.xml`、`tablet-game-overlay.png`。其中 UI 原始转储可能含安装凭据，不得提交或公开。
 - Android 17、实体设备重启后的恢复、错误有效配对码和数小时稳定性尚未验证。后续应用户要求，本次修复更新为 0.5.1／versionCode 4，并提交到 `dev`。图标方案等待用户选择，选定后再生成 Release APK。
+
+## 12. 2026-11-06：0.5.2 图标与公开说明
+
+- 用户选定 C 款「二次元电弧」，原稿保存在 `docs/assets/raidian-icon-source.png`。替换全部 launcher 资源，提供五种密度的普通／圆形图标、自适应图层及 README 预览；原画未重绘。导出脚本在 `tools/Generate-LauncherIcons.ps1`，生成提示词及来源见 `docs/assets/README.md`。彩色插画不直接用作 monochrome 遮罩。
+- 版本为 0.5.2／versionCode 5。README 说明四种权限、记录／浮窗／电池曲线、读数限制、Android Studio 签名和命令行构建，逐项致谢直接依赖、随附组件及参考工程；同步扩展 THIRD_PARTY_NOTICES。当前源码实际 minSdk 为 33、Gradle Daemon JDK 为 25，优先于本文历史环境记录。
+- SPAKE2 Android 2.2.1 的 POM 标注 LGPL-3.0，不能与 LibADB 所选 Apache-2.0 混同。Raidian 自有代码尚未声明统一许可证，没有擅自添加许可。发布签名凭据与私钥保持本地，gitignore 补充私钥扩展名，保留已跟踪的 debug 专用密钥。
+- `:app:testDebugUnitTest :app:processReleaseResources` 通过，30 项测试无失败，四种 ABI 的 Release 合并 Manifest 均为 0.5.2／5。核对图标预览与文档本地链接。没有构建 Release APK、安装设备或推送 GitHub；用户将自行通过 Android Studio 构建及发布。
