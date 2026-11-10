@@ -1,7 +1,7 @@
 # Raidian — 阶段性总结与后续开发指引
 
 > 本文件是给后续 AI 智能体(agent)的阶段交接文档。请先完整阅读,再继续开发。
-> 最近更新:2026-11-06（内置权限通道见第 10 节；小米平板 Release 实测及 IPC 修复见第 11 节；O1 数据源约束继续适用）
+> 最近更新:2026-11-10（后台耗电与服务自启动循环修复见第 13 节；0.5.4/7 已覆盖安装到平板 Release）
 
 ## 1. 项目目标
 
@@ -658,3 +658,34 @@ CSV 行片段(单位已正确):
 - `:app:assembleRelease`（含 R8／lintVital）通过。核对与平板已安装 0.5.2 的签名一致后，使用同版本 Release 覆盖安装，未卸载或清除数据。实测四模式布局、复制反馈、命令展开收起、无线输入／禁用与启用、横竖屏与键盘避让。未发起配对或请求 root。
 - 测试后恢复电脑 ADB 模式，重新进入页面清除示例输入，自动旋转恢复 1、user_rotation 恢复 0、night 恢复 no。尝试系统 night yes 后该页面仍显示浅色，不能称为深色实测通过。测试前旧 runner 已因用户升级显示版本不匹配，本轮保留该状态，未重启采集服务。
 - 截图在忽略目录 `_shots/privilege-after-*.png`，其中修改前截图及键盘截图可能含命令信息，不公开。界面实测时版本为 0.5.2／5；随后应用户要求更新为 0.5.3／versionCode 6，将本轮界面改动与版本、文档一并提交到 `dev`。
+
+## 13. 2026-11-10：0.5.4 后台耗电修复（服务自启动循环 + 空闲退出 + 采集降开销）
+
+### 根因（实机确认，优先级最高）
+
+- `BatteryCurveService.onStartCommand` 调用 `BatteryCurveController.start()`，后者又调用 `startForegroundService()`；每次 `onStartCommand` 都会再发一次 start，形成“服务自己启动自己”的死循环。
+- 0.5.3 Release 在平板上 `lastStartId` 已超过 50 万；force-stop 后重新打开，6 秒内 `lastStartId=13439`（约 2240 次/秒）。进程存活 3 小时 51 分累计 542 秒 CPU（约 3.9% 单核）、约 69 万次自愿上下文切换。这是“后台没有任务也大量耗电”的主因，不是采样本身。
+- 修复：`BatteryCurveService.onStartCommand` 只调用 `ensureLoop()`，禁止再调用 `start()`；用户关闭曲线记录时 `stopSelf()` 并返回 `START_NOT_STICKY`。修改后同一场景 `lastStartId=1`，5 秒内不再增长。
+
+### 统一后台策略
+
+- 新增 `runtime/BackgroundPolicy.kt`，用 `ProcessLifecycleOwner` 合并所有 Activity 的前后台状态。
+- 活跃条件只有四种：前台界面、会话记录、悬浮窗、续航曲线记录。后台且四者都没有时：停 `MonitorService`、`BatteryCurveService`、曲线循环、权限探测，30 秒后尝试 `Process.killProcess`。HyperOS 可能先冻结进程，冻结时已没有任何采集或定时任务。
+- 续航曲线改为**默认关闭**。旧版本 `enabled` 默认 true 且用户没手动关过时不会写入这个键；升级时把这种“隐式默认”迁移为 false，明确按过开关的偏好保留。开启后才创建前台服务和通知。
+- `PrivilegeManager` 探测改为 OFF/LOW/NORMAL：前台 3 秒、后台有记录/浮窗 15 秒、空闲或只有曲线记录时 0 次。采样请求断线时直接降级，绝不在采样路径同步重连（一次 connect 扫描可能阻塞数秒）；后台探测负责恢复，曲线低频读 batterystats 前用 `ensureConnected()` 按需重连并退避 15 秒。
+
+### 采集开销优化
+
+- `MonitorSampler` 主路径只做硬件快照（约 20–46 ms）。前台应用、FPS、电池、Thermal HAL 移到后台协程，1 秒刷新；灭屏后降到 3 秒。
+- FPS 层解析 30 秒刷新一次；没有 shell 权限直接跳过 SurfaceFlinger；温度 sysfs 在 runner 内缓存 2 秒；Thermal HAL 只取当前温度段（完整 dumpsys 约 14 KB，过滤后约 2.5 KB）。
+- `SessionRecorder` 不再每 50 ms 醒一次，按下一采样点 `delay`；帧统计 5 秒更新一次；温区 JSON 30 秒序列化一次；CSV 数字格式化改为整数缩放，避免每行 100 次 `String.format`。
+- 悬浮窗灭屏时暂停轮询；实时页只有当前分页可见时才采样。曲线系统统计改为放电 15 分钟、充电 1 小时一次，拔电时补一次；30 秒电池 tick 与 60 秒曲线点不变。
+
+### 实机数据
+
+- Release 0.5.4 覆盖安装（同签名，未卸载、数据保留）后：启动后无任何服务；回桌面 35 秒，`/proc` CPU 从 79/52 到 79/53 tick（约 0.03% 单核），没有采样。
+- 开发包（独立包名 `yy.daniel.raidian.dev`，电脑 ADB、O1 十核）：记录 36 点/18.2 秒，CSV 间隔精确 500 ms，`sample_duration_ms` 18–46 ms；改造前同场景 135–645 ms。前台记录/浮窗仍属真实采集任务，屏幕亮 + 2 Hz 约 15–20% 单核，不能当作“空闲耗电”。
+- 曲线后台 70 秒：CSV 2→3 行（60 秒一点），进程 CPU 约 0.67 秒（约 1% 单核），`BatteryCurveService` 的 `lastStartId=1`。
+- 版本 0.5.4／versionCode 7。`assembleDebug -PdevPackage` 生成 `yy.daniel.raidian.dev`，普通 debug 包名不变；Release 与已装 0.5.3 使用同一证书，`install -r` 覆盖成功。`:app:testDebugUnitTest`、`:app:assembleDebug -PdevPackage`、`:app:assembleRelease` 均通过。
+- 改动文件：`runtime/BackgroundPolicy.kt`（新增）、`RaidianApp.kt`、`battery/BatteryCurvePrefs`+`Controller`+`Service`、`privilege/PrivilegeManager.kt`、`monitor/MonitorSampler`+`HardwareSnapshotReader`+`SessionRecorder`+`Sample`+`SurfaceFlingerFpsReader`、`overlay/OverlayController.kt`、`ui/MainScreen`+`HomeScreen`+`EnduranceScreen`、`app/build.gradle.kts`、`gradle/libs.versions.toml`。
+- 未做：数小时连续记录/充电曲线长跑、游戏高帧场景的功耗对比。当前“活跃采集”仍有成本，若还要压低，优先把后台记录间隔从 500 ms 调到 1 s，而不是继续删采样字段。

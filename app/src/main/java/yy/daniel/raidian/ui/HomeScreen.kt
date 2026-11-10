@@ -80,7 +80,11 @@ fun HomeScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
     @Composable
     fun renderPage(index: Int) {
         when (index) {
-            0 -> MainScreen(modifier = Modifier.fillMaxSize(), vm = vm)
+            0 -> MainScreen(
+                modifier = Modifier.fillMaxSize(),
+                vm = vm,
+                visible = pagerState.currentPage == index,
+            )
             1 -> EnduranceScreen(modifier = Modifier.fillMaxSize(), vm = vm)
             2 -> ChargingScreen(modifier = Modifier.fillMaxSize(), vm = vm)
             else -> RecordsScreen(

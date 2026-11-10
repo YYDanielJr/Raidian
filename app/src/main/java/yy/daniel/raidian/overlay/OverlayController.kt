@@ -3,6 +3,7 @@ package yy.daniel.raidian.overlay
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +60,7 @@ class OverlayController(private val app: RaidianApp) {
         _shown.value = true
         yy.daniel.raidian.monitor.MonitorService.start(app)
         startPolling()
+        app.backgroundPolicy.onWorkChanged()
     }
 
     /** 隐藏悬浮窗并停止轮询 */
@@ -68,6 +70,7 @@ class OverlayController(private val app: RaidianApp) {
         pollJob?.cancel()
         pollJob = null
         yy.daniel.raidian.monitor.MonitorService.stopIfIdle(app)
+        app.backgroundPolicy.onWorkChanged()
     }
 
     /** 显示/隐藏切换(主界面按钮用) */
@@ -115,6 +118,12 @@ class OverlayController(private val app: RaidianApp) {
         pollJob?.cancel()
         pollJob = scope.launch {
             while (isActive) {
+                // 灭屏时悬浮窗根本不可见，继续 2Hz 采样和更新文本没有意义；
+                // 记录会话有自己的采样循环，不会因这里暂停而中断。
+                if (!screenOn()) {
+                    delay(1_000)
+                    continue
+                }
                 try {
                     val s = app.sampler.sample(System.currentTimeMillis())
                     overlay?.update(s)
@@ -125,6 +134,12 @@ class OverlayController(private val app: RaidianApp) {
                 delay(500)
             }
         }
+    }
+
+    private fun screenOn(): Boolean = try {
+        app.getSystemService(PowerManager::class.java).isInteractive
+    } catch (_: Exception) {
+        true
     }
 
     /** 最新一次采样(主界面实时页与悬浮窗同源读取这里) */

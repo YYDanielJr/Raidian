@@ -3,7 +3,6 @@ package yy.daniel.raidian.monitor
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.util.Locale
 
 /**
  * 一次完整采样的数据快照 —— 贯穿全链路(采集 → 悬浮窗 → 实时页 → CSV 落盘)的
@@ -129,8 +128,16 @@ data class Sample(
             "swap_used_mb", "charge_counter_mah", "sample_duration_ms", "privileged", "thermal_json"))
     }.joinToString(",")
 
-    /** 生成一行 CSV 数据;字符串字段(包名/应用名)做引号转义以兼容逗号 */
-    fun toCsvRow(coreCount: Int = perCoreFreqMhz.size): String = buildList {
+    /**
+     * 生成一行 CSV 数据;字符串字段(包名/应用名)做引号转义以兼容逗号。
+     *
+     * [thermalJson] 可由调用方缓存复用。38 个温区的 JSON 每 500ms 重新序列化一次
+     * 是记录路径上的固定 CPU 开销，而温区明细变化很慢；记录器按 30s 刷新即可。
+     */
+    fun toCsvRow(
+        coreCount: Int = perCoreFreqMhz.size,
+        thermalJson: String = Json.encodeToString(thermalReadings),
+    ): String = buildList {
         addAll(listOf("$elapsedMs", fmt(fps), fmt(frameTimeMs),
             "$cpuL", "$cpuM", "$cpuB", fmt(cpuLoad)))
         for (i in 0 until coreCount) add("${perCoreFreqMhz.getOrNull(i) ?: -1}")
@@ -146,12 +153,20 @@ data class Sample(
             "${cpuPolicyIds.getOrNull(i) ?: -1}"))
         addAll(listOf(fmt(gpuTemp), fmt(npuTemp), fmt(skinTemp), "$thermalStatus", "$availableMemMb",
             "$swapUsedMb", "$chargeCounterMah", "$sampleDurationMs", if (privileged) "1" else "0",
-            csvEsc(Json.encodeToString(thermalReadings))))
+            csvEsc(thermalJson)))
     }.joinToString(",")
 
 
-    /** 浮点格式化为 1 位小数;负值(无效)统一写成 -1 */
-    private fun fmt(v: Float): String = if (!v.isFinite() || v < 0) "-1" else String.format(Locale.US, "%.1f", v)
+    /**
+     * 浮点格式化为 1 位小数;负值(无效)统一写成 -1。
+     * 用整数缩放代替 String.format：每行约 100 个数字、记录时每秒 2 行，
+     * String.format 的解析开销会直接落在采样线程上。
+     */
+    private fun fmt(v: Float): String {
+        if (!v.isFinite() || v < 0f) return "-1"
+        val scaled = kotlin.math.round(v * 10f).toInt()
+        return "${scaled / 10}.${kotlin.math.abs(scaled % 10)}"
+    }
 
     /** CSV 字符串字段转义:包一层引号,内部引号翻倍(标准 CSV 规则) */
     private fun csvEsc(s: String): String = "\"" + s.replace("\"", "\"\"") + "\""

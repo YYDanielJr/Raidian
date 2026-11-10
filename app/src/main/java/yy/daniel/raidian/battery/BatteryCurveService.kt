@@ -59,12 +59,24 @@ class BatteryCurveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 被系统回收后重启:确保记录循环还在跑
-        try {
-            RaidianApp.instance.batteryCurves.start()
+        // 注意：这里只能确保进程内循环，绝不能调用 BatteryCurveController.start()。
+        // start() 会再次 startForegroundService()，而每一次 start 都回到本方法，
+        // 形成「服务自己启动自己」的死循环。0.5.3 实测 6 秒内收到 13439 次
+        // startId，持续占用 CPU 并产生大量 binder 调用，是后台耗电的主因。
+        val app = try {
+            RaidianApp.instance
         } catch (e: Exception) {
-            Log.w(TAG, "restart controller failed", e)
+            Log.w(TAG, "controller unavailable", e)
+            stopSelf()
+            return START_NOT_STICKY
         }
+        if (!app.batteryCurves.isEnabled()) {
+            // 用户已关闭后台记录：不再保活，立即退出。
+            app.batteryCurves.suspendForIdle()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        app.batteryCurves.ensureLoop()
         return START_STICKY
     }
 

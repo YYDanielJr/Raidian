@@ -19,8 +19,8 @@ android {
         applicationId = "yy.daniel.raidian"
         minSdk = 33
         targetSdk = 37
-        versionCode = 6
-        versionName = "0.5.3"
+        versionCode = 7
+        versionName = "0.5.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 //
@@ -98,6 +98,15 @@ android {
         debug {
             // 使用项目内 keystore，避免依赖 SDK 目录可写性
             signingConfig = signingConfigs.getByName("debugLocal")
+            /*
+             * 需要把调试包安装到已装 release 的机器上（签名不同、无法 -r 覆盖）时，
+             * 用 -PdevPackage 生成独立包名 yy.daniel.raidian.dev，两个版本可并存。
+             * 普通 assembleDebug 不受影响，包名仍是 yy.daniel.raidian。
+             */
+            if (project.hasProperty("devPackage")) {
+                applicationIdSuffix = ".dev"
+                versionNameSuffix = "-dev"
+            }
         }
     }
 
@@ -175,6 +184,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    // ProcessLifecycleOwner：合并多 Activity 的进程级前后台，供后台空闲策略使用
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     // Miuix

@@ -10,6 +10,7 @@ import yy.daniel.raidian.monitor.SessionStore
 import yy.daniel.raidian.privilege.PrivilegeManager
 import yy.daniel.raidian.monitor.SurfaceFlingerFpsReader
 import yy.daniel.raidian.overlay.OverlayController
+import yy.daniel.raidian.runtime.BackgroundPolicy
 
 /** Application 级依赖装配；权限通道、采样、记录与浮窗共享同一实例。 */
 class RaidianApp : Application() {
@@ -31,9 +32,14 @@ class RaidianApp : Application() {
 
     /**
      * 续航 / 充电曲线记录控制器(Application 级常驻):
-     * 每 30s 记电池状态、每 5min 读系统 batterystats,产出续航曲线与充电曲线。
+     * 用户开启后台记录时每 30s 记电池状态、每 15min 读系统 batterystats；
+     * 默认关闭，不创建前台服务。
      */
     lateinit var batteryCurves: yy.daniel.raidian.battery.BatteryCurveController
+        private set
+
+    /** 统一前后台策略：无任务时停服务、停探测并在延迟后退出进程 */
+    lateinit var backgroundPolicy: BackgroundPolicy
         private set
 
     override fun onCreate() {
@@ -55,9 +61,15 @@ class RaidianApp : Application() {
         sessionStore = SessionStore(this)
         // 7) 悬浮窗控制器(Application 级,常驻)
         overlayController = OverlayController(this)
-        // 8) 续航 / 充电曲线记录(Application 级常驻循环 + 前台服务保活,见 BatteryCurveController)
+        // 8) 续航 / 充电曲线记录(默认关闭；开启时才启动循环与前台服务)
         batteryCurves = yy.daniel.raidian.battery.BatteryCurveController(this, executor)
+        // 9) 统一前后台策略(必须在各组件就绪之后、曲线 start 之前创建)
+        backgroundPolicy = BackgroundPolicy(this)
         batteryCurves.start()
+        // 观察进程级前后台；Application 启动时可能没有 Activity（例如服务重启），
+        // 首次评估会在 30s 后结束这种“无任务”进程。
+        backgroundPolicy.install()
+        backgroundPolicy.onWorkChanged()
     }
 
     companion object {
