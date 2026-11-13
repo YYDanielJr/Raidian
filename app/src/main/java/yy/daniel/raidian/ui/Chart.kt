@@ -3,15 +3,11 @@ package yy.daniel.raidian.ui
 import android.graphics.Paint
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -23,18 +19,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/**
- * 轻量折线图(纯 Compose Canvas 手绘,无第三方图表库)。
- *
- * 行为约定:
- *  - 入参 [values] 为 List<Float?>:null 视为"断点",断点两侧不连线(数据缺口处留白);
- *  - 纵轴范围:传入 [minY]/[maxY] 则固定;两者都 null 时按数据自适应,并上下留 8% 边;
- *  - -1 这类"无有效值"哨兵不在这里处理 —— 调用方应先用 [sampleSeries] 转成 null。
- *  - 坐标轴:[showAxis]=true 时左侧画 y 刻度值与 x 轴刻度([xLabels] 提供底标文字);
- *    绘图区自动为坐标轴留白(左 ~44dp、下 ~20dp)。
- *
- * 用途:实时页近 2 分钟曲线 + 会话详情页各指标曲线(见 ChartRow / DetailChart)。
- */
+/** Full data remains available to selection and statistics; only the drawing is reduced. */
 @Composable
 fun LineChart(
     values: List<Float?>,
@@ -54,17 +39,18 @@ fun LineChart(
 ) {
     val times = remember(elapsedMs, values.size) { elapsedMs.takeIf { validChartTimeline(it, values.size) }.orEmpty() }
     val select by rememberUpdatedState(onSelect)
+    val selection = rememberUpdatedState(selectedIndex)
     val touch = if (onSelect == null) Modifier else Modifier
-        .pointerInput(times, values.size) {
+        .pointerInput(times, values.size, showAxis) {
             detectTapGestures { point ->
-                val left = ChartAxisDefaults.YAxisWidthDp.dp.toPx()
+                val left = if (showAxis) ChartAxisDefaults.YAxisWidthDp.dp.toPx() else 0f
                 val width = (size.width - left - 4.dp.toPx()).coerceAtLeast(1f)
                 nearestChartIndex((point.x - left) / width, values.size, times)?.let { select?.invoke(it) }
             }
         }
-        .pointerInput(times, values.size) {
+        .pointerInput(times, values.size, showAxis) {
             fun pick(x: Float) {
-                val left = ChartAxisDefaults.YAxisWidthDp.dp.toPx()
+                val left = if (showAxis) ChartAxisDefaults.YAxisWidthDp.dp.toPx() else 0f
                 val width = (size.width - left - 4.dp.toPx()).coerceAtLeast(1f)
                 nearestChartIndex((x - left) / width, values.size, times)?.let { select?.invoke(it) }
             }
@@ -74,82 +60,34 @@ fun LineChart(
             }
         }
     val axisColor = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurfaceVariantSummary
-    Canvas(modifier = modifier.then(touch)) {
-        if (size.width <= 0f || size.height <= 0f || values.isEmpty()) return@Canvas
-
-        // 坐标轴留白
-        val ax = axisOffsets()
-        val plotW = size.width - ax.left - ax.right
-        val plotH = size.height - ax.top - ax.bottom
-        if (plotW <= 0f || plotH <= 0f) return@Canvas
-
-        // 只取有效点(index, value)
-        val pts = values.mapIndexedNotNull { i, v -> if (v != null && v.isFinite()) i to v else null }
-        if (pts.isEmpty()) {
-            drawAxes(ax, plotW, plotH, 0f, 1f, xLabels, axisColor)
-            return@Canvas
-        }
-
-        // 纵轴范围
-        val lo = minY ?: pts.minOf { it.second }
-        val hi = maxY ?: pts.maxOf { it.second }
-        val span = (hi - lo).takeIf { it > 0f } ?: 1f
-        val pad = if (minY == null && maxY == null) span * 0.08f else 0f
-        val lo2 = (lo - pad).coerceAtMost(lo)
-        val hi2 = (hi + pad).coerceAtLeast(hi)
-        val span2 = (hi2 - lo2).coerceAtLeast(1f)
-
-        fun xOf(i: Int): Float = ax.left + plotW * chartFraction(i, values.size, times)
-        fun yOf(v: Float): Float = ax.top + plotH - (v - lo2) / span2 * plotH
-
-        drawAxes(ax, plotW, plotH, lo2, lo2 + span2, xLabels, axisColor)
-
-        // 连线(断点断开)
-        val linePath = Path()
-        var first = true
-        var i = 0
-        while (i < pts.size) {
-            val (idx, v) = pts[i]
-            if (first) { linePath.moveTo(xOf(idx), yOf(v)); first = false }
-            else linePath.lineTo(xOf(idx), yOf(v))
-            val next = pts.getOrNull(i + 1)
-            if (next != null && (next.first - idx > 1 || breakBefore.getOrNull(next.first) == true)) first = true
-            i++
-        }
-        if (fillAlpha > 0f) {
-            val fillPath = Path()
-            var start = true
-            pts.forEachIndexed { n, (idx, v) ->
-                if (start) {
-                    fillPath.moveTo(xOf(idx), ax.top + plotH)
-                    start = false
+    // Keep this modifier stable when the selection changes; the marker is read in onDrawBehind.
+    val drawing = remember(values, times, breakBefore, color, minY, maxY, lineWidth, fillAlpha, showAxis, xLabels, axisColor) {
+        Modifier.drawWithCache {
+            val ax = if (showAxis) axisOffsets() else AxisInset(0f, 6.dp.toPx(), 4.dp.toPx(), 0f)
+            val w = (size.width - ax.left - ax.right).coerceAtLeast(0f)
+            val h = (size.height - ax.top - ax.bottom).coerceAtLeast(0f)
+            val vertices = reduceChart(values, times, breakBefore, w.toInt())
+            val range = chartRange(listOf(vertices), minY, maxY)
+            fun x(i: Int) = ax.left + w * chartFraction(i, values.size, times)
+            fun y(v: Float) = ax.top + h - (v - range.first) / range.second * h
+            val paths = chartPaths(vertices, ::x, ::y, ax.top + h, fillAlpha > 0f)
+            val stroke = Stroke(width = lineWidth.toPx(), cap = StrokeCap.Round)
+            onDrawBehind {
+                if (showAxis) drawAxes(ax, w, h, range.first, range.first + range.second, xLabels, axisColor)
+                if (fillAlpha > 0f) drawPath(paths.fill, color.copy(alpha = fillAlpha))
+                drawPath(paths.line, color, style = stroke)
+                paths.dots.forEach { drawCircle(color, 2.dp.toPx(), it) }
+                selection.value?.takeIf { it in values.indices }?.let { index ->
+                    val px = x(index)
+                    drawLine(axisColor.copy(alpha = 0.6f), Offset(px, ax.top), Offset(px, ax.top + h), 1.dp.toPx())
+                    values[index]?.takeIf { it.isFinite() }?.let { drawCircle(color, 5.dp.toPx(), Offset(px, y(it))) }
                 }
-                fillPath.lineTo(xOf(idx), yOf(v))
-                val next = pts.getOrNull(n + 1)
-                if (next == null || next.first - idx > 1 || breakBefore.getOrNull(next.first) == true) {
-                    fillPath.lineTo(xOf(idx), ax.top + plotH)
-                    fillPath.close()
-                    start = true
-                }
-            }
-            drawPath(fillPath, color = color.copy(alpha = fillAlpha))
-        }
-        drawPath(linePath, color = color, style = Stroke(width = lineWidth.toPx(), cap = StrokeCap.Round))
-        if (pts.size == 1) drawCircle(color, 3.dp.toPx(), Offset(xOf(pts[0].first), yOf(pts[0].second)))
-        selectedIndex?.takeIf { it in values.indices }?.let { index ->
-            val x = xOf(index)
-            drawLine(axisColor.copy(alpha = 0.6f), Offset(x, ax.top), Offset(x, ax.top + plotH), 1.dp.toPx())
-            values[index]?.takeIf { it.isFinite() }?.let { v ->
-                drawCircle(color, 5.dp.toPx(), Offset(x, yOf(v)))
             }
         }
     }
+    Box(modifier.then(touch).then(drawing))
 }
 
-/**
- * 多序列折线图:同一坐标系叠画多条线(如每个 CPU 核心的频率曲线)。
- * 各序列独立断点处理;坐标轴/颜色语义同 [LineChart]。
- */
 @Composable
 fun MultiLineChart(
     series: List<Pair<String, List<Float?>>>,
@@ -167,58 +105,64 @@ fun MultiLineChart(
     val count = series.maxOfOrNull { it.second.size } ?: 0
     val times = remember(elapsedMs, count) { elapsedMs.takeIf { validChartTimeline(it, count) }.orEmpty() }
     val axisColor = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurfaceVariantSummary
-    Canvas(modifier = modifier) {
-        if (size.width <= 0f || size.height <= 0f || series.isEmpty()) return@Canvas
-
-        val ax = axisOffsets()
-        val plotW = size.width - ax.left - ax.right
-        val plotH = size.height - ax.top - ax.bottom
-        if (plotW <= 0f || plotH <= 0f) return@Canvas
-
-        // 每序列有效点 + 全量并集纵轴
-        val allPts = ArrayList<Float>()
-        val each = series.map { (_, values) ->
-            val pts = values.mapIndexedNotNull { i, v -> if (v != null && v.isFinite()) i to v else null }
-            pts.forEach { allPts.add(it.second) }
-            pts
-        }
-        val maxLen = series.maxOf { it.second.size }.coerceAtLeast(1)
-        if (allPts.isEmpty()) {
-            drawAxes(ax, plotW, plotH, 0f, 1f, xLabels, axisColor)
-            return@Canvas
-        }
-        val lo = minY ?: allPts.min()
-        val hi = maxY ?: allPts.max()
-        val span = (hi - lo).takeIf { it > 0f } ?: 1f
-        val pad = if (minY == null && maxY == null) span * 0.08f else 0f
-        val lo2 = lo - pad
-        val hi2 = hi + pad
-        val span2 = (hi2 - lo2).coerceAtLeast(1f)
-
-        fun xOf(i: Int): Float = ax.left + plotW * chartFraction(i, maxLen, times)
-        fun yOf(v: Float): Float = ax.top + plotH - (v - lo2) / span2 * plotH
-
-        drawAxes(ax, plotW, plotH, lo2, lo2 + span2, xLabels, axisColor)
-
-        // 逐序列连线
-        series.forEachIndexed { si, _ ->
-            val pts = each[si]
-            if (pts.isEmpty()) return@forEachIndexed
-            val color = colors.getOrNull(si) ?: ChartColors.Power
-            val linePath = Path()
-            var first = true
-            var i = 0
-            while (i < pts.size) {
-                val (idx, v) = pts[i]
-                if (first) { linePath.moveTo(xOf(idx), yOf(v)); first = false }
-                else linePath.lineTo(xOf(idx), yOf(v))
-                val next = pts.getOrNull(i + 1)
-                if (next != null && (next.first - idx > 1 || breakBefore.getOrNull(next.first) == true)) first = true
-                i++
+    val drawing = remember(series, times, breakBefore, colors, minY, maxY, lineWidth, showAxis, xLabels, axisColor) {
+        Modifier.drawWithCache {
+            val ax = if (showAxis) axisOffsets() else AxisInset(0f, 6.dp.toPx(), 4.dp.toPx(), 0f)
+            val w = (size.width - ax.left - ax.right).coerceAtLeast(0f)
+            val h = (size.height - ax.top - ax.bottom).coerceAtLeast(0f)
+            val reduced = series.map { reduceChart(it.second, times, breakBefore, w.toInt(), count) }
+            val range = chartRange(reduced, minY, maxY)
+            fun x(i: Int) = ax.left + w * chartFraction(i, count, times)
+            fun y(v: Float) = ax.top + h - (v - range.first) / range.second * h
+            val paths = reduced.map { chartPaths(it, ::x, ::y, ax.top + h, false) }
+            val stroke = Stroke(width = lineWidth.toPx(), cap = StrokeCap.Round)
+            onDrawBehind {
+                if (showAxis) drawAxes(ax, w, h, range.first, range.first + range.second, xLabels, axisColor)
+                paths.forEachIndexed { i, path ->
+                    val color = colors.getOrNull(i) ?: ChartColors.Power
+                    drawPath(path.line, color, style = stroke)
+                    path.dots.forEach { drawCircle(color, 2.dp.toPx(), it) }
+                }
             }
-            drawPath(linePath, color = color, style = Stroke(width = lineWidth.toPx(), cap = StrokeCap.Round))
         }
     }
+    Box(modifier.then(drawing))
+}
+
+private fun chartRange(series: List<List<ChartVertex>>, minY: Float?, maxY: Float?): Pair<Float, Float> {
+    var low = Float.POSITIVE_INFINITY
+    var high = Float.NEGATIVE_INFINITY
+    for (points in series) for (point in points) {
+        low = minOf(low, point.value)
+        high = maxOf(high, point.value)
+    }
+    val lo = minY ?: low.takeIf { it.isFinite() } ?: 0f
+    val hi = maxY ?: high.takeIf { it.isFinite() } ?: 1f
+    val pad = if (minY == null && maxY == null) (hi - lo).coerceAtLeast(1f) * 0.08f else 0f
+    return (lo - pad) to (hi - lo + 2 * pad).coerceAtLeast(1f)
+}
+
+private data class ChartPaths(val line: Path, val fill: Path, val dots: List<Offset>)
+
+private fun chartPaths(points: List<ChartVertex>, x: (Int) -> Float, y: (Float) -> Float, bottom: Float, filled: Boolean): ChartPaths {
+    val line = Path()
+    val fill = Path()
+    val dots = ArrayList<Offset>()
+    points.forEachIndexed { i, point ->
+        val px = x(point.index)
+        val py = y(point.value)
+        val end = i == points.lastIndex || points[i + 1].move
+        if (point.move) {
+            line.moveTo(px, py)
+            if (filled) fill.moveTo(px, bottom)
+            if (end) dots.add(Offset(px, py))
+        } else line.lineTo(px, py)
+        if (filled) {
+            fill.lineTo(px, py)
+            if (end) { fill.lineTo(px, bottom); fill.close() }
+        }
+    }
+    return ChartPaths(line, fill, dots)
 }
 
 // ==================== 坐标轴绘制 ====================
@@ -226,7 +170,7 @@ fun MultiLineChart(
 /** 轴占位(px):左 y 轴文字宽、无上/右、下 x 轴标签高 */
 private data class AxisInset(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
-private fun DrawScope.axisOffsets(): AxisInset = AxisInset(
+private fun androidx.compose.ui.unit.Density.axisOffsets(): AxisInset = AxisInset(
     left = ChartAxisDefaults.YAxisWidthDp.dp.toPx(),
     top = 6.dp.toPx(),
     right = 4.dp.toPx(),

@@ -19,6 +19,23 @@ import java.util.Locale
  */
 class SessionStore(private val context: Context) {
 
+    /** Stream rows instead of retaining all CSV strings (including large thermal JSON fields). */
+    fun forEachSample(dir: File, onHeader: (List<String>) -> Unit, onRow: (List<String>) -> Unit) {
+        val file = File(dir, "samples.csv")
+        if (!file.exists()) { onHeader(emptyList()); return }
+        file.bufferedReader().use { reader ->
+            var headerRead = false
+            reader.forEachLine { line ->
+                if (line.isNotBlank()) {
+                    val fields = splitCsv(line.removePrefix("\uFEFF"))
+                    if (!headerRead) { onHeader(fields); headerRead = true }
+                    else onRow(fields)
+                }
+            }
+            if (!headerRead) onHeader(emptyList())
+        }
+    }
+
     /** 会话根目录(filesDir 下,应用私有,免存储权限) */
     private val sessionsDir: File
         get() = File(context.filesDir, "raidian/sessions")

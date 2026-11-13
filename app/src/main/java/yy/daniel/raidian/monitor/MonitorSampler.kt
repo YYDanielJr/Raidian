@@ -8,10 +8,14 @@ import android.os.BatteryManager
 import android.os.PowerManager
 import android.os.SystemClock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 同一采样器供记录、界面和浮窗使用。锁保护差分计数器；短时请求共享同一个快照，
@@ -23,6 +27,21 @@ class MonitorSampler(
     private val exec: CommandExecutor,
     private val appState: AppStateReader,
 ) {
+    private companion object {
+        /**
+         * 慢字段（前台 / FPS / 温度 / 电池）的刷新间隔。
+         * 这些字段包含 shell/dumpsys，放在主采样路径上会把 500ms 节奏拖到 1s 以上；
+         * 现在由后台协程刷新，主采样只读缓存，因此主路径只做一次硬件快照。
+         */
+        const val SLOW_INTERVAL_MS = 1_000L
+        /** 灭屏后没有画面变化，FPS/前台/温度都可以更慢；这是长时间记录最省电的区间。 */
+        const val SLOW_INTERVAL_SCREEN_OFF_MS = 3_000L
+        /** 温度：O1 只能读 Thermal HAL，温度变化慢，2s 一次不会影响判读 */
+        const val THERMAL_TTL_MS = 2_000L
+        /** 温度读取失败/无权限后的重试间隔，避免每轮都起一个 dumpsys 进程 */
+        const val THERMAL_RETRY_MS = 30_000L
+    }
+
     private val mutex = Mutex()
     private var previousCpu = emptyMap<String, MetricsParser.CpuTimes>()
     private var cached: Sample? = null
@@ -30,12 +49,28 @@ class MonitorSampler(
     private var lastIdentity = ""
     private var knownCoreCount = 0
 
-    suspend fun sample(elapsedMs: Long): Sample = withContext(Dispatchers.IO) {
+    // 慢字段缓存：由 slowScope 后台刷新，主采样路径只读，绝不在这里等 shell。
+    @Volatile private var frontCache: Pair<String, String>? = null
+    @Volatile private var fpsCache = AppStateReader.FpsState.NONE
+    @Volatile private var fpsCachePkg = ""
+    @Volatile private var thermalHalCache: List<ThermalReading>? = null
+    @Volatile private var thermalHalCacheAt = 0L
+    @Volatile private var thermalHalRetryAt = 0L
+    @Volatile private var batteryCache: Battery? = null
+
+    private val slowScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val slowRefreshRunning = AtomicBoolean(false)
+    @Volatile private var nextSlowAt = 0L
+
+    /** 上次采样里 sysfs 温区是否为空，后台刷新据此决定要不要再读 Thermal HAL。 */
+    @Volatile private var needThermalHal = true
+
+    suspend fun sample(elapsedMs: Long, maxCacheAgeMs: Long = 400L): Sample = withContext(Dispatchers.IO) {
         mutex.withLock {
             val now = SystemClock.elapsedRealtime()
             val identity = exec.identity
             val privileged = exec.privileged
-            cached?.takeIf { now - sampledAt < 400 && identity == lastIdentity }?.let {
+            cached?.takeIf { now - sampledAt < maxCacheAgeMs && identity == lastIdentity }?.let {
                 return@withLock it.copy(elapsedMs = elapsedMs)
             }
             if (identity != lastIdentity) previousCpu = emptyMap()
@@ -76,18 +111,19 @@ class MonitorSampler(
             val net = readNetwork(blocks["NET"].orEmpty())
             val profile = DeviceProfile.detect()
             var thermals = MetricsParser.thermalSysfs(blocks["THERMAL"].orEmpty())
-            if (profile.isXring || profile.isColorOs || thermals.isEmpty()) {
-                val dump = safe("") { exec.execute("dumpsys -t 1 thermalservice 2>/dev/null") }
-                val hal = MetricsParser.thermalHal(dump)
-                if (hal.isNotEmpty()) thermals = hal
-            }
+            needThermalHal = profile.isXring || profile.isColorOs || thermals.isEmpty()
+            if (needThermalHal) thermalHalCache?.let { thermals = it }
             fun maxTemp(vararg kind: String) = thermals.filter { it.kind in kind }.maxOfOrNull { it.celsius } ?: -1f
             val thermalStatus = try {
                 context.getSystemService(PowerManager::class.java).currentThermalStatus
             } catch (_: Exception) { -1 }
-            val batt = battery()
-            val front = safe("" to "") { appState.readFrontApp() }
-            val fps = safe(AppStateReader.FpsState.NONE) { appState.readFpsFor(front.first) }
+
+            // 慢字段由后台协程刷新；主路径只读上一份缓存，主采样耗时稳定在几十毫秒。
+            maybeRefreshSlow(now)
+            val front: Pair<String, String> = frontCache ?: ("" to "")
+            val fps = if (front.first.isNotEmpty() && front.first == fpsCachePkg) fpsCache
+                else AppStateReader.FpsState.NONE
+            val batt = batteryCache ?: Battery(-1f, Int.MIN_VALUE, -1, -1, -1, -1)
             Sample(
                 elapsedMs = elapsedMs, fps = fps.fps, frameTimeMs = fps.frameTimeMs,
                 cpuL = little, cpuM = middle, cpuB = big, cpuLoad = cpuLoad,
@@ -109,7 +145,70 @@ class MonitorSampler(
                 frontPkg = front.first, frontApp = front.second,
                 wifiRxBytes = net[0], wifiTxBytes = net[1], mobileRxBytes = net[2], mobileTxBytes = net[3],
                 sampleDurationMs = SystemClock.elapsedRealtime() - start, privileged = privileged && exec.privileged,
-            ).also { cached = it; sampledAt = SystemClock.elapsedRealtime() }
+            ).also {
+                cached = it
+                sampledAt = SystemClock.elapsedRealtime()
+            }
+        }
+    }
+
+    /**
+     * 后台刷新慢字段：前台应用、FPS、电池、Thermal HAL。
+     *
+     * 这些读取都可能走采集服务/ dumpsys，单次 100~500ms；如果放在 500ms 的采样主路径里，
+     * CSV 间隔会被拖到 1s 以上，而且前台/FPS/HAL 会在同一拍集中执行，造成明显卡顿。
+     * 现在主路径只做硬件快照，慢字段在后台串行刷新；同一时刻最多一个刷新协程。
+     */
+    private fun maybeRefreshSlow(now: Long) {
+        if (now < nextSlowAt) return
+        if (!slowRefreshRunning.compareAndSet(false, true)) return
+        val interactive = try {
+            context.getSystemService(PowerManager::class.java).isInteractive
+        } catch (_: Exception) {
+            true
+        }
+        nextSlowAt = now + if (interactive) SLOW_INTERVAL_MS else SLOW_INTERVAL_SCREEN_OFF_MS
+        slowScope.launch {
+            try {
+                val newFront = safe("" to "") { appState.readFrontApp() }
+                frontCache = newFront
+                if (newFront.first != fpsCachePkg) {
+                    // 切应用后旧应用的 FPS 不再有意义，先清空，等本轮读到新值。
+                    fpsCache = AppStateReader.FpsState.NONE
+                    fpsCachePkg = newFront.first
+                }
+                val newFps = if (newFront.first.isEmpty()) AppStateReader.FpsState.NONE
+                    else safe(AppStateReader.FpsState.NONE) { appState.readFpsFor(newFront.first) }
+                fpsCache = newFps
+                fpsCachePkg = newFront.first
+
+                batteryCache = battery()
+
+                if (needThermalHal) {
+                    val nowT = SystemClock.elapsedRealtime()
+                    if (nowT - thermalHalCacheAt >= THERMAL_TTL_MS && nowT >= thermalHalRetryAt) {
+                        // 只取 HAL 当前温度段。完整 dumpsys 还带冷却设备/阈值（约 14KB），
+                        // 而采样只需要 2.5KB 的 Temperature 行；少传少解析。
+                        val dump = safe("") {
+                            exec.execute(
+                                "dumpsys -t 1 thermalservice 2>/dev/null | " +
+                                    "sed -n -e '/HAL Ready:/p' " +
+                                    "-e '/Current temperatures from HAL:/,/Current cooling devices/p'"
+                            )
+                        }
+                        val hal = MetricsParser.thermalHal(dump)
+                        if (hal.isNotEmpty()) {
+                            thermalHalCache = hal
+                            thermalHalCacheAt = nowT
+                            thermalHalRetryAt = 0L
+                        } else {
+                            thermalHalRetryAt = nowT + THERMAL_RETRY_MS
+                        }
+                    }
+                }
+            } finally {
+                slowRefreshRunning.set(false)
+            }
         }
     }
 

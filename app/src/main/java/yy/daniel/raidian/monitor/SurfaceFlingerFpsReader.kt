@@ -30,6 +30,12 @@ class SurfaceFlingerFpsReader(
     companion object {
         /** 解析/测量失败后的重试间隔:期间内直接返回 -1,不再跑慢命令 */
         private const val RETRY_DELAY_MS = 3000L
+        /**
+         * 已解析层的定期刷新间隔。层名里的 #序号会随 Surface 重建变化，
+         * 但失效时 measureByLatency 会返回 null 并触发重解析；不必每 5s
+         * 都跑两次全量 dumpsys（Output Layer + --list）。
+         */
+        private const val LAYER_REFRESH_MS = 30_000L
         /** 至少多少条真实帧数据行才算 --latency 有内容(防 SoloX#303 式退化输出) */
         private const val MIN_REAL_ROWS = 3
         /** 帧时间戳若晚于当前时间这么久,认为应用已停止渲染 */
@@ -50,6 +56,9 @@ class SurfaceFlingerFpsReader(
 
     /** 通用 FpsReader 接口实现:内部自行查询前台应用 */
     override fun readFps(): Float {
+        // 没有 shell 身份时 dumpsys SurfaceFlinger 必然读不到；直接返回未知，
+        // 不每 500ms 起一个 dumpsys 进程（默认权限下这是纯浪费）。
+        if (!exec.privileged) return -1f
         if (disabled && android.os.SystemClock.elapsedRealtime() < nextResolveAtMs) return -1f
         disabled = false
         return try {
@@ -71,6 +80,7 @@ class SurfaceFlingerFpsReader(
      *  - **-1** 读不到:没有解析到任何渲染层(前台是纯无渲染场景)或权限被拒。
      */
     fun readFpsForPkg(pkg: String): Float {
+        if (!exec.privileged) return -1f
         if (disabled && android.os.SystemClock.elapsedRealtime() < nextResolveAtMs) return -1f
         disabled = false
         return try {
@@ -83,7 +93,7 @@ class SurfaceFlingerFpsReader(
             if (pkg.isEmpty()) return -1f
 
             // 1) 无候选 → 解析(受退避控制)
-            if (targetLayers.isEmpty() || android.os.SystemClock.elapsedRealtime() - resolvedAtMs > 5000) {
+            if (targetLayers.isEmpty() || android.os.SystemClock.elapsedRealtime() - resolvedAtMs > LAYER_REFRESH_MS) {
                 val now = android.os.SystemClock.elapsedRealtime()
                 if (now < nextResolveAtMs) return -1f
                 targetLayers = resolveLayers(pkg)

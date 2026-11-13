@@ -236,8 +236,8 @@ fun EnduranceScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel
                     HyperListRow(onClick = { vm.setCurveEnabled(!enabled) }) {
                         ListRowContent(
                             title = "后台记录续航曲线",
-                            summary = if (enabled) "每 30 秒采样、每 5 分钟读一次系统统计"
-                            else "已关闭：不再记录新的曲线数据",
+                            summary = if (enabled) "每 30 秒采样、每 15 分钟读一次系统统计；会保留常驻通知"
+                            else "已关闭：不创建后台服务，后台不做任何采集",
                             trailing = { Switch(checked = enabled, onCheckedChange = null) },
                         )
                     }

@@ -169,6 +169,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val breakBefore: List<Boolean> = emptyList(),
     )
 
+    private val _sessionLoading = MutableStateFlow(false)
+    val sessionLoading: StateFlow<Boolean> = _sessionLoading.asStateFlow()
+    private val _exporting = MutableStateFlow(false)
+    val exporting: StateFlow<Boolean> = _exporting.asStateFlow()
+    private val _exportMessage = MutableStateFlow<String?>(null)
+    val exportMessage: StateFlow<String?> = _exportMessage.asStateFlow()
+
+    fun exportSession(dir: File, uri: android.net.Uri, html: Boolean) {
+        if (_exporting.value) return
+        val detail = _sessionDetail.value ?: return
+        _exporting.value = true
+        _exportMessage.value = null
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val resolver = getApplication<android.app.Application>().contentResolver
+                    val output = resolver.openOutputStream(uri, "wt") ?: error("无法打开保存位置")
+                    output.use {
+                        if (html) {
+                            it.writer(Charsets.UTF_8).use { writer ->
+                                yy.daniel.raidian.monitor.SessionExporter.html(detail.meta, sessionCharts(detail), writer)
+                            }
+                        } else yy.daniel.raidian.monitor.SessionExporter.csv(File(dir, "samples.csv"), it)
+                    }
+                }
+                _exportMessage.value = "已导出${if (html) " HTML 报告" else " CSV 表格"}"
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _exportMessage.value = "导出失败，请检查保存位置及剩余空间后重试。未完成的文件可删除。"
+            } finally {
+                _exporting.value = false
+            }
+        }
+    }
+
     /** 手动刷新 ADB 或 root 授权状态(进入页面 / 授权回调后调用) */
     fun refreshPrivileges() { viewModelScope.launch { privileges.refresh() } }
 
@@ -229,83 +265,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun openSession(dir: File?) {
         viewModelScope.launch {
+            _sessionLoading.value = true
             if (dir == null) {
                 _sessionDetail.value = null
+                _sessionLoading.value = false
                 return@launch
             }
             val store: SessionStore = raidian.sessionStore
             val detail = withContext(Dispatchers.IO) {
-                val meta = store.readMeta(dir)
-                if (meta == null) null
-                else {
-                    val (header, rows) = store.readSamplesWithHeader(dir)
-                    if (rows.isEmpty()) {
-                        // 只有元数据(空记录,如 FPS 无数据时也应可看)
-                        SessionDetail(
-                            meta = meta,
-                            elapsed = emptyList(), fps = emptyList(),
-                            batteryTemp = emptyList(), cpuTemp = emptyList(),
-                            power = emptyList(), cpuLoad = emptyList(),
-                            gpuLoad = emptyList(), perCoreFreq = emptyList(),
-                        )
-                    } else {
-                        // 按表头列名定位(兼容新旧表头;找不到的列整列为 -1/空)
-                        fun idx(name: String): Int = header.indexOf(name)
-                        val iElapsed = idx("elapsed_ms"); val iFps = idx("fps")
-                        val iLoad = idx("cpu_load_pct")
-                        val iGpuLoad = idx("gpu_load_pct")
-                        val iBatt = idx("battery_temp_c"); val iCpuT = idx("max_cpu_temp_c")
-                        val iPower = idx("power_mw")
-                        val coreCount = header.mapNotNull { Regex("cpu(\\d+)_freq_mhz").matchEntire(it)?.groupValues?.get(1)?.toIntOrNull() }
-                            .maxOrNull()?.plus(1) ?: 0
-                        val coreIdx = (0 until coreCount)
-                            .map { it to idx("cpu${it}_freq_mhz") }
-                        // 断点:elapsed 跳变超过 2×采样间隔视为暂停段(曲线留白)
-                        val gapNs = (meta.intervalMs.takeIf { it > 0 } ?: 500L) * 2
-
-                        val elapsed = ArrayList<Long>(rows.size)
-                        val fps = ArrayList<Float>(rows.size)
-                        val batt = ArrayList<Float>(rows.size)
-                        val cpuT = ArrayList<Float>(rows.size)
-                        val power = ArrayList<Float>(rows.size)
-                        val load = ArrayList<Float>(rows.size)
-                        val gpuLoad = ArrayList<Float>(rows.size)
-                        val perCore = coreIdx.map { ArrayList<Float>(rows.size) }
-                        for (r in rows) {
-                            val e = r.getOrNull(iElapsed)?.toLongOrNull() ?: 0L
-                            // 保留每条真实读数，暂停段通过独立 breakBefore 标志断线
-                            fun add(list: MutableList<Float>, v: Float) { list.add(v) }
-                            elapsed.add(e)
-                            add(fps, r.getOrNull(iFps)?.toFloatOrNull() ?: -1f)
-                            add(batt, r.getOrNull(iBatt)?.toFloatOrNull() ?: -1f)
-                            add(cpuT, r.getOrNull(iCpuT)?.toFloatOrNull() ?: -1f)
-                            add(power, r.getOrNull(iPower)?.toFloatOrNull() ?: -1f)
-                            add(load, r.getOrNull(iLoad)?.toFloatOrNull() ?: -1f)
-                            add(gpuLoad, r.getOrNull(iGpuLoad)?.toFloatOrNull() ?: -1f)
-                            coreIdx.forEachIndexed { ci, (_, col) ->
-                                add(perCore[ci], r.getOrNull(col)?.toFloatOrNull() ?: -1f)
-                            }
-                        }
-                        fun series(name: String): List<Float> {
-                            val col = idx(name)
-                            return rows.map { row ->
-                                row.getOrNull(col)?.toFloatOrNull()?.takeIf { it.isFinite() } ?: -1f
-                            }
-                        }
-                        fun firstInt(name: String): Int = rows.asSequence().mapNotNull { it.getOrNull(idx(name))?.toIntOrNull() }
-                            .firstOrNull { it >= 0 } ?: -1
-                        SessionDetail(meta, elapsed, fps, batt, cpuT, power, load, gpuLoad, perCore,
-                            corePolicies = (0 until coreCount).map { firstInt("cpu${it}_policy") },
-                            coreMaxMhz = (0 until coreCount).map { firstInt("cpu${it}_max_mhz") },
-                            breakBefore = elapsed.mapIndexed { i, t -> i > 0 && t - elapsed[i - 1] > gapNs },
-                            perCoreLoad = (0 until coreCount).map { series("cpu${it}_load_pct") },
-                            perCoreTemp = (0 until coreCount).map { series("cpu${it}_temp_c") },
-                            extraSeries = listOf("gpu_temp_c", "npu_temp_c", "skin_temp_c", "thermal_status", "available_mem_mb", "swap_used_mb")
-                                .associateWith(::series))
-                    }
-                }
+                try { loadSessionDetail(store, dir) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { null }
             }
             _sessionDetail.value = detail
+            _sessionLoading.value = false
         }
     }
 

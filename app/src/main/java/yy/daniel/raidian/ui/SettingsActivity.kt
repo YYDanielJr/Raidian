@@ -3,6 +3,7 @@ package yy.daniel.raidian.ui
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +27,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,6 +47,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
+import androidx.navigationevent.compose.rememberNavigationEventDispatcherOwner
+import top.yukonga.miuix.kmp.basic.DropdownArrowEndAction
+import top.yukonga.miuix.kmp.overlay.OverlayListPopup
+import top.yukonga.miuix.kmp.basic.ListPopupColumn
+import top.yukonga.miuix.kmp.basic.DropdownImpl
+import top.yukonga.miuix.kmp.basic.PopupPositionProvider
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import yy.daniel.raidian.monitor.SamplingPrefs
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
@@ -57,23 +69,19 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.AppRecording
 import top.yukonga.miuix.kmp.icon.extended.Settings
+import top.yukonga.miuix.kmp.icon.extended.ScreenMirroring
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import yy.daniel.raidian.overlay.OverlayWindow
 
-/**
- * 通用设置页 Activity。
- *
- * 从主页顶栏"设置"按钮进入。底部 NavigationBar 两个分页:
- *  - 「实时曲线设置」:主页实时曲线各指标(九宫格全部指标)的显示开关 + 配色;
- *  - 「悬浮窗设置」:悬浮窗开关、悬浮窗行显示项、触摸穿透、字号等全部悬浮窗相关设置。
- */
+/** 通用、实时曲线、悬浮窗三个分类，手机底部导航与平板侧栏共用。 */
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MiuixTheme {
-                SettingsScreen(modifier = Modifier.fillMaxSize())
+            val owner = rememberNavigationEventDispatcherOwner(enabled = true, parent = null)
+            CompositionLocalProvider(LocalNavigationEventDispatcherOwner provides owner) {
+                MiuixTheme { SettingsScreen(modifier = Modifier.fillMaxSize()) }
             }
         }
     }
@@ -90,8 +98,11 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
     var enabled by remember { mutableStateOf(prefs.enabledItems()) }
     var touchThrough by remember { mutableStateOf(prefs.touchThrough()) }
     var textSize by remember { mutableIntStateOf(prefs.textSizeSp()) }
-    // 底部导航当前页:0 实时曲线设置 / 1 悬浮窗设置
-    var tab by remember { mutableIntStateOf(0) }
+    // Each category keeps its own scroll position, including after rotation.
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val scrollStates = listOf(rememberScrollState(), rememberScrollState(), rememberScrollState())
+    val categories = listOf("通用", "实时曲线", "悬浮窗")
+    val categoryIcons = listOf(MiuixIcons.Settings, MiuixIcons.AppRecording, MiuixIcons.ScreenMirroring)
 
     fun updateEnabled(newSet: Set<String>) {
         enabled = newSet
@@ -119,10 +130,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
         }
     }
 
-    val tabTitle = when (tab) {
-        1 -> "悬浮窗设置"
-        else -> "实时曲线设置"
-    }
+    val tabTitle = categories[tab]
 
     SubPageScaffold(
         title = "设置",
@@ -140,25 +148,17 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                     androidx.compose.runtime.LaunchedEffect(expand) { if (expand) railState.expand() else railState.collapse() }
                     NavigationRail(state = railState, defaultWindowInsetsPadding = false, showDivider = false,
                         expandContentDescription = "展开导航", collapseContentDescription = "收起导航") {
-                        NavigationRailItem(
-                            selected = tab == 0,
-                            onClick = { tab = 0 },
-                            icon = MiuixIcons.AppRecording,
-                            label = "实时曲线设置",
-                        )
-                        NavigationRailItem(
-                            selected = tab == 1,
-                            onClick = { tab = 1 },
-                            icon = MiuixIcons.Settings,
-                            label = "悬浮窗设置",
-                        )
+                        categories.forEachIndexed { index, title ->
+                            NavigationRailItem(selected = tab == index, onClick = { tab = index },
+                                icon = categoryIcons[index], label = title)
+                        }
                     }
                     // 右侧内容:独立滚动
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(scrollStates[tab])
                             .padding(bottom = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
@@ -200,7 +200,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                                 if (blurSupported) Modifier.layerBackdrop(navigationBackdrop)
                                 else Modifier
                             )
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(scrollStates[tab])
                             .padding(padding)
                             .padding(bottom = 80.dp) // 给底部导航栏让位
                     ) {
@@ -236,18 +236,10 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel(
                         color = if (blurSupported) Color.Transparent else MiuixTheme.colorScheme.surface,
                         showDivider = !blurSupported,
                     ) {
-                        NavigationBarItem(
-                            selected = tab == 0,
-                            onClick = { tab = 0 },
-                            icon = MiuixIcons.AppRecording,
-                            label = "实时曲线设置",
-                        )
-                        NavigationBarItem(
-                            selected = tab == 1,
-                            onClick = { tab = 1 },
-                            icon = MiuixIcons.Settings,
-                            label = "悬浮窗设置",
-                        )
+                        categories.forEachIndexed { index, title ->
+                            NavigationBarItem(selected = tab == index, onClick = { tab = index },
+                                icon = categoryIcons[index], label = title)
+                        }
                     }
                 }
             }
@@ -274,37 +266,37 @@ private fun SettingsBody(
     onToggleOverlay: () -> Unit,
 ) {
     Column {
-        // 重新运行设置向导入口:授权状态变化 / 换机 / 想重调偏好时可再次
-        // 打开首次设置向导(向导可补 Shizuku 与悬浮窗授权,与本次设置同源)
-        HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-            HyperListRow(onClick = onWizard) {
-                ListRowContent(
-                    title = "设置向导",
-                    summary = "重新运行首次设置：补授权、重选悬浮窗与实时曲线偏好",
-                )
-            }
-        }
-
-        PrivilegeSettingsRow()
-        BackgroundSettingsRow()
         when (tab) {
-            // ---------- Tab 0:实时曲线设置 ----------
             0 -> {
+                SamplingSettings()
+                SectionHeader("权限与后台")
+                PrivilegeSettingsRow()
+                BackgroundSettingsRow()
+                SectionHeader("应用设置")
                 HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    LiveChartPrefs.ALL.forEach { item ->
-                        chartItemRow(item)
+                    HyperListRow(onClick = onWizard) {
+                        ListRowContent(title = "设置向导", summary = "重新检查授权与显示偏好")
                     }
                 }
-                Text(
-                    "主页按以上设置绘制曲线。部分设备未开放 GPU 频率或占用接口，未读取到的项目显示占位。",
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            }
+            1 -> {
+                val groups = listOf(
+                    "性能" to setOf("fps", "cpu_load", "gpu_load", "cpu_freq", "gpu_freq"),
+                    "温度" to setOf("battery_temp", "soc_temp", "gpu_temp", "npu_temp", "skin_temp"),
+                    "电池与内存" to setOf("power", "memory"),
                 )
-                Spacer(Modifier.height(6.dp))
+                groups.forEach { (title, keys) ->
+                    SectionHeader(title)
+                    HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        LiveChartPrefs.ALL.filter { it.key in keys }.forEach { chartItemRow(it) }
+                    }
+                }
+                Text("开关控制主页曲线的显示，点击色点调整配色。设备未开放的指标显示为缺失。",
+                    fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
 
-            // ---------- Tab 1:悬浮窗设置(开关 + 显示项 + 外观) ----------
+            // ---------- 悬浮窗：开关、显示内容、交互和外观 ----------
             else -> {
                 // 悬浮窗开关(整行可点)
                 SectionHeader("悬浮窗")
@@ -500,6 +492,94 @@ private fun chartItemRow(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Controlled Miuix popup: the current value anchors the menu, and system Back only closes it. */
+@Composable
+private fun SamplingSettings() {
+    val context = LocalContext.current
+    var interval by remember { androidx.compose.runtime.mutableLongStateOf(SamplingPrefs.read(context)) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showCustom by rememberSaveable { mutableStateOf(false) }
+    var custom by rememberSaveable { mutableStateOf(interval.toString()) }
+    var openCustomAfterDismiss by remember { mutableStateOf(false) }
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    fun label(value: Long) = java.math.BigDecimal(value).divide(java.math.BigDecimal(1000))
+        .stripTrailingZeros().toPlainString() + " 秒"
+    fun save(value: Long) {
+        SamplingPrefs.save(context, value)
+        interval = value
+        focus.clearFocus()
+        showCustom = false
+    }
+    BackHandler(enabled = menuOpen || showCustom) {
+        menuOpen = false
+        showCustom = false
+        openCustomAfterDismiss = false
+        focus.clearFocus()
+    }
+    val options = SamplingPrefs.presets.map(::label) +
+        if (interval in SamplingPrefs.presets) "自定义" else "自定义（${label(interval)}）"
+    val selected = SamplingPrefs.presets.indexOf(interval).takeIf { it >= 0 } ?: SamplingPrefs.presets.size
+    SectionHeader("会话记录")
+    HyperListGroup(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+        HyperListRow(onClick = { menuOpen = true }) {
+            ListRowContent(title = "采样间隔", summary = "新设置从下一次记录生效", trailing = {
+                Box {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(label(interval), fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantActions)
+                        Spacer(Modifier.width(8.dp))
+                        DropdownArrowEndAction(actionColor = MiuixTheme.colorScheme.onSurfaceVariantActions)
+                    }
+                    OverlayListPopup(
+                        show = menuOpen, alignment = PopupPositionProvider.Align.End,
+                        onDismissRequest = { menuOpen = false },
+                        onDismissFinished = {
+                            if (openCustomAfterDismiss) {
+                                custom = interval.toString()
+                                showCustom = true
+                                openCustomAfterDismiss = false
+                            }
+                        },
+                    ) {
+                        ListPopupColumn {
+                            options.forEachIndexed { index, option ->
+                                DropdownImpl(text = option, optionSize = options.size, index = index,
+                                    isSelected = selected == index, onSelectedIndexChange = {
+                                        if (index < SamplingPrefs.presets.size) save(SamplingPrefs.presets[index])
+                                        else openCustomAfterDismiss = true
+                                        menuOpen = false
+                                    })
+                            }
+                        }
+                    }
+                }
+            })
+        }
+    }
+    Text("间隔越短，采集开销和文件体积越大。帧率、电池及温度按各自周期刷新。",
+        fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+    OverlayDialog(show = showCustom, title = "自定义采样间隔", summary = "范围为 250～10000 毫秒。",
+        onDismissRequest = { showCustom = false; focus.clearFocus() }) {
+        top.yukonga.miuix.kmp.basic.TextField(
+            value = custom, onValueChange = { custom = it.filter { c -> c in '0'..'9' }.take(5) },
+            label = "间隔（毫秒）", singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(20.dp))
+        val value = custom.toLongOrNull()
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            top.yukonga.miuix.kmp.basic.TextButton(text = "取消", modifier = Modifier.weight(1f),
+                onClick = { showCustom = false; focus.clearFocus() })
+            Button(onClick = { value?.let(::save) },
+                enabled = value != null && value in SamplingPrefs.MIN_MS..SamplingPrefs.MAX_MS,
+                colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColorsPrimary(), modifier = Modifier.weight(1f)) {
+                Text("确定")
             }
         }
     }

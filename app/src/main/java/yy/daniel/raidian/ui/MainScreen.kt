@@ -61,15 +61,21 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * [RecordsActivity](会话记录)与 [SettingsActivity](实时曲线/悬浮窗设置)。
  */
 @Composable
-fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = viewModel()) {
+fun MainScreen(
+    modifier: Modifier = Modifier,
+    vm: MainViewModel = viewModel(),
+    /** 是否处于当前分页；分页容器里非实时页不应继续 2Hz 采样。 */
+    visible: Boolean = true,
+) {
     val context = LocalContext.current
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    androidx.compose.runtime.DisposableEffect(lifecycle) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
-            vm.setUiVisible(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+    androidx.compose.runtime.DisposableEffect(lifecycle, visible) {
+        fun sync() {
+            vm.setUiVisible(visible && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
         }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ -> sync() }
         lifecycle.addObserver(observer)
-        vm.setUiVisible(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+        sync()
         onDispose { lifecycle.removeObserver(observer); vm.setUiVisible(false) }
     }
     /** 悬浮窗权限是否已授予(决定实时页按钮可用性与提示) */

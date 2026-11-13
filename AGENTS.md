@@ -1,7 +1,7 @@
 # Raidian — 阶段性总结与后续开发指引
 
 > 本文件是给后续 AI 智能体(agent)的阶段交接文档。请先完整阅读,再继续开发。
-> 最近更新:2026-11-06（内置权限通道见第 10 节；小米平板 Release 实测及 IPC 修复见第 11 节；O1 数据源约束继续适用）
+> 最近更新:2026-11-13（0.5.6／9 设置分类、采样菜单与并排导出见第 15 节；已同签名覆盖安装到平板 Release，无线采集服务已恢复）
 
 ## 1. 项目目标
 
@@ -658,3 +658,82 @@ CSV 行片段(单位已正确):
 - `:app:assembleRelease`（含 R8／lintVital）通过。核对与平板已安装 0.5.2 的签名一致后，使用同版本 Release 覆盖安装，未卸载或清除数据。实测四模式布局、复制反馈、命令展开收起、无线输入／禁用与启用、横竖屏与键盘避让。未发起配对或请求 root。
 - 测试后恢复电脑 ADB 模式，重新进入页面清除示例输入，自动旋转恢复 1、user_rotation 恢复 0、night 恢复 no。尝试系统 night yes 后该页面仍显示浅色，不能称为深色实测通过。测试前旧 runner 已因用户升级显示版本不匹配，本轮保留该状态，未重启采集服务。
 - 截图在忽略目录 `_shots/privilege-after-*.png`，其中修改前截图及键盘截图可能含命令信息，不公开。界面实测时版本为 0.5.2／5；随后应用户要求更新为 0.5.3／versionCode 6，将本轮界面改动与版本、文档一并提交到 `dev`。
+
+## 13. 2026-11-10：0.5.4 后台耗电修复（服务自启动循环 + 空闲退出 + 采集降开销）
+
+### 根因（实机确认，优先级最高）
+
+- `BatteryCurveService.onStartCommand` 调用 `BatteryCurveController.start()`，后者又调用 `startForegroundService()`；每次 `onStartCommand` 都会再发一次 start，形成“服务自己启动自己”的死循环。
+- 0.5.3 Release 在平板上 `lastStartId` 已超过 50 万；force-stop 后重新打开，6 秒内 `lastStartId=13439`（约 2240 次/秒）。进程存活 3 小时 51 分累计 542 秒 CPU（约 3.9% 单核）、约 69 万次自愿上下文切换。这是“后台没有任务也大量耗电”的主因，不是采样本身。
+- 修复：`BatteryCurveService.onStartCommand` 只调用 `ensureLoop()`，禁止再调用 `start()`；用户关闭曲线记录时 `stopSelf()` 并返回 `START_NOT_STICKY`。修改后同一场景 `lastStartId=1`，5 秒内不再增长。
+
+### 统一后台策略
+
+- 新增 `runtime/BackgroundPolicy.kt`，用 `ProcessLifecycleOwner` 合并所有 Activity 的前后台状态。
+- 活跃条件只有四种：前台界面、会话记录、悬浮窗、续航曲线记录。后台且四者都没有时：停 `MonitorService`、`BatteryCurveService`、曲线循环、权限探测，30 秒后尝试 `Process.killProcess`。HyperOS 可能先冻结进程，冻结时已没有任何采集或定时任务。
+- 续航曲线改为**默认关闭**。旧版本 `enabled` 默认 true 且用户没手动关过时不会写入这个键；升级时把这种“隐式默认”迁移为 false，明确按过开关的偏好保留。开启后才创建前台服务和通知。
+- `PrivilegeManager` 探测改为 OFF/LOW/NORMAL：前台 3 秒、后台有记录/浮窗 15 秒、空闲或只有曲线记录时 0 次。采样请求断线时直接降级，绝不在采样路径同步重连（一次 connect 扫描可能阻塞数秒）；后台探测负责恢复，曲线低频读 batterystats 前用 `ensureConnected()` 按需重连并退避 15 秒。
+
+### 采集开销优化
+
+- `MonitorSampler` 主路径只做硬件快照（约 20–46 ms）。前台应用、FPS、电池、Thermal HAL 移到后台协程，1 秒刷新；灭屏后降到 3 秒。
+- FPS 层解析 30 秒刷新一次；没有 shell 权限直接跳过 SurfaceFlinger；温度 sysfs 在 runner 内缓存 2 秒；Thermal HAL 只取当前温度段（完整 dumpsys 约 14 KB，过滤后约 2.5 KB）。
+- `SessionRecorder` 不再每 50 ms 醒一次，按下一采样点 `delay`；帧统计 5 秒更新一次；温区 JSON 30 秒序列化一次；CSV 数字格式化改为整数缩放，避免每行 100 次 `String.format`。
+- 悬浮窗灭屏时暂停轮询；实时页只有当前分页可见时才采样。曲线系统统计改为放电 15 分钟、充电 1 小时一次，拔电时补一次；30 秒电池 tick 与 60 秒曲线点不变。
+
+### 实机数据
+
+- Release 0.5.4 覆盖安装（同签名，未卸载、数据保留）后：启动后无任何服务；回桌面 35 秒，`/proc` CPU 从 79/52 到 79/53 tick（约 0.03% 单核），没有采样。
+- 开发包（独立包名 `yy.daniel.raidian.dev`，电脑 ADB、O1 十核）：记录 36 点/18.2 秒，CSV 间隔精确 500 ms，`sample_duration_ms` 18–46 ms；改造前同场景 135–645 ms。前台记录/浮窗仍属真实采集任务，屏幕亮 + 2 Hz 约 15–20% 单核，不能当作“空闲耗电”。
+- 曲线后台 70 秒：CSV 2→3 行（60 秒一点），进程 CPU 约 0.67 秒（约 1% 单核），`BatteryCurveService` 的 `lastStartId=1`。
+- 版本 0.5.4／versionCode 7。`assembleDebug -PdevPackage` 生成 `yy.daniel.raidian.dev`，普通 debug 包名不变；Release 与已装 0.5.3 使用同一证书，`install -r` 覆盖成功。`:app:testDebugUnitTest`、`:app:assembleDebug -PdevPackage`、`:app:assembleRelease` 均通过。
+- 改动文件：`runtime/BackgroundPolicy.kt`（新增）、`RaidianApp.kt`、`battery/BatteryCurvePrefs`+`Controller`+`Service`、`privilege/PrivilegeManager.kt`、`monitor/MonitorSampler`+`HardwareSnapshotReader`+`SessionRecorder`+`Sample`+`SurfaceFlingerFpsReader`、`overlay/OverlayController.kt`、`ui/MainScreen`+`HomeScreen`+`EnduranceScreen`、`app/build.gradle.kts`、`gradle/libs.versions.toml`。
+- 未做：数小时连续记录/充电曲线长跑、游戏高帧场景的功耗对比。当前“活跃采集”仍有成本，若还要压低，优先把后台记录间隔从 500 ms 调到 1 s，而不是继续删采样字段。
+
+
+## 14. 2026-11-13：0.5.5 长报告、采样设置与导出
+
+### 实现
+
+- `ChartReduction.kt`：显示层按实际时间映射到水平像素桶，每桶按原始顺序保留首点、最低、最高、末点；遇空值、非有限值和 `breakBefore` 先结束分段。只减少绘图点，原数据、统计和选点索引不变。
+- `Chart.kt`：`drawWithCache` 缓存降采样结果、Path、填充和孤立点；滚动不再每帧扫描全量记录。选点标记在绘制阶段读取，拖动不重建路径。`ChartData` 统计改为单遍遍历，并修复浮点时间映射向下截断导致的毫秒级选点偏差。
+- `SessionDetailActivity`：每张图单独作为 LazyColumn 项，离屏图表不参与绘制；后台准备完整 ChartDocument，复用于离线报告。补充 CPU 总占用图。`SessionDetailLoader` + `SessionStore.forEachSample` 逐行解析 CSV，仅保留曲线数值列，不把数十 MB 温区 JSON 和全部字符串行同时留在内存。
+- `SamplingPrefs`：默认 500ms；250／500／1000／2000／5000ms 预设和 250～10000ms 自定义。设置页「会话采样」持久化，下一次 start 固定本会话间隔并写入元数据，不修改进行中会话。只控制会话记录，实时页／浮窗刷新周期保持原设定。采样器快照有效期由记录传入 `min(400, interval/2)`，避免 250ms 模式重复复用 400ms 硬件快照；慢字段保留现有独立刷新策略，对照 FrameX Monitors 分指标周期实现，不改数据源或单位。
+- `SessionExporter`：详情提供 CreateDocument 系统保存入口；HTML 为独立离线文件，含元数据、SVG 曲线、图例和全量有效点统计，用户文本 HTML 转义；CSV 流式复制所有原始列并添加 UTF-8 BOM，便于 Excel 识别中文。后台导出由 ViewModel 承载，旋转不会丢失导出状态，支持失败提示与取消系统选择器。
+- 版本 0.5.5／versionCode 8，README 同步。
+
+### 验证
+
+- 37 项 JVM 测试通过（新增 4 项百万点压缩／峰谷／断线／真实时间测试、3 项 HTML 转义／全量统计／CSV 保真／空报告测试）；Release R8、lintVital、四 ABI 构建通过。
+- 小米平板 7S Pro（0B83147005901540）原为 0.5.4／7 非 debuggable；核对新旧 SHA-256 证书一致后 `install -r` 覆盖升级为 0.5.5／8，没有卸载、清数据或安装 debug，原有 6 份报告保留。
+- 用户描述的约两小时记录，在实机列表实际为《异环》113分10秒／13528点；两份《终末地》为14分21秒及18分03秒。对最长报告进行相同四次600ms纵向滑动：原版中位85ms、P95 150ms、janky 54/112；新版中位5ms、P95 10ms、janky 1/558。是一次短时实机对比，页面布局发生变化，不是长期严格基准。
+- 最长报告导出到平板 Download：`Raidian_20261112_091932_670.html`（14张图、1685343字节），对应CSV（13528行、106列、51031489字节）。实际离线浏览器渲染通过；CPU8详情仍显示13528有效／0缺失，点选56:55.281为1891MHz。
+- 250ms设置下以现有服务未连接的默认权限降级路径短录28秒／113点，导出CSV实际间隔250～253ms，中位251ms。750ms自定义保存后重进设置仍保留。未声称这等于250ms刷新所有慢字段或高负载游戏测试。
+- 测试后关闭录制、恢复500ms和原《异环》目标，未改系统调试开关或权限方式。新增短测试会话保留，导出文件在Download；本地验证文件均在忽略目录 `_shots/`。结束时crash buffer无错误。
+- 升级后旧runner提示版本不匹配。实机当前选择的是无线ADB。自动审批拒绝了涉及采集权限控件的合并操作，担心改变持久化调试／提权设置；已通过只读检查确认状态，并向用户单独询问是否重启现有无线ADB服务，尚待回复。没有绕过审批切换电脑ADB、请求root或更改系统调试开关。此项不影响历史报告、导出和采样设置。
+
+
+### 0.5.5 安装后采集服务重启跟进
+
+- 用户已明确允许重启现有无线 ADB 采集服务。已在原无线 ADB 模式停止旧 runner，并尝试用保存的配对身份自动连接。
+- 只读查询确认 `adb_wifi_enabled=0`，TLS 端口为空；自动发现超时，尚未启动新 runner。目前降级默认权限。未切换模式、未改系统调试开关、未请求 root。
+- 先前向用户承诺不改系统调试开关，因此临时开启无线调试再关闭需要补充确认；后续确认后再启动并验证实时数据，不能将此次尝试记为已恢复。
+
+## 15. 2026-11-13：0.5.6 设置整理与无线采集恢复
+
+### 实现
+
+- 设置导航整理为「通用」「实时曲线」「悬浮窗」三类，分别记忆滚动位置。通用包含会话记录、权限与后台、应用设置；实时曲线按性能、温度、电池与内存分组；悬浮窗相关设置集中在悬浮窗页。
+- 采样间隔改为 HyperOS 风格列表行，右侧当前值及上下箭头；点击显示锚定弹出菜单，背景变暗、选中项蓝色文字与勾选。保留 0.25／0.5／1／2／5 秒预设与 250～10000 毫秒自定义，下一次记录生效。
+- 自定义输入使用 OverlayDialog，等待菜单关闭动画结束后打开；非法输入禁用确认。系统返回先关闭弹层，避免直接退出设置。SettingsActivity 注入 NavigationEventDispatcherOwner。
+- 当前依赖 Miuix 0.9.4 AAR 支持 `OverlayListPopup`、`ListPopupColumn`、`DropdownImpl`、`DropdownArrowEndAction`。本地 miuix-main 已有较新 API，不能直接照搬其中 `popup.OverlayDropdownPopup`；开发时已对照文档、示例及实际 AAR 确认。
+- 报告导出按钮改为同一行等宽的「导出 HTML」「导出 CSV」，保存逻辑沿用原实现。
+- 版本 0.5.6／versionCode 9，README 同步；本轮未修改采集数据源或单位换算。
+
+### 验证与设备状态
+
+- 37 项 JVM 测试通过，Release 构建通过（含 R8、lintVital 和四 ABI）。arm64 Release 与旧版证书一致，已 `install -r` 覆盖安装；实机确认 0.5.6／9 且非 debuggable。
+- 平板实测弹出菜单、三个分类切换、返回关闭弹层正常。100ms 输入禁止保存，750ms 自定义保存成功，最后恢复 500ms。
+- 原有报告及上轮短测试会话共 7 份保留，最长报告仍为 113分10秒／13528点。两个导出按钮同排，分别打开 `.html` 和 `.csv` 系统保存窗口，取消返回正常；未重复生成大文件。
+- 用户自行开启无线调试并完成配对，且已明确授权重启现有采集服务。在原无线 ADB 模式停止旧 runner 后，应用自动发现并连接成功，页面显示「采集服务已连接／当前通过无线 ADB 采集」，新 `raidian_adb` 进程为 shell 身份，实时 CPU、温度等恢复出数。第 14 节末的待恢复事项已解决。
+- 未切换权限方式、未请求 root、未修改系统调试开关。记录保持关闭，间隔 500ms、原《异环》目标保留；无线调试保留用户开启的状态。crash buffer 无错误，验证文件位于忽略目录 `_shots/`。

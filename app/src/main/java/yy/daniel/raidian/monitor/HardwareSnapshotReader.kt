@@ -11,6 +11,11 @@ import java.io.File
 class HardwareSnapshotReader {
     private fun read(path: String): String = try { File(path).readText().trim() } catch (_: Exception) { "" }
 
+    // 106/38 个温区逐个读文件在 2Hz 采样下没有意义：温度是慢变量。
+    // 运行在 runner 进程里也复用这一份缓存，减少每秒上百次 sysfs open。
+    @Volatile private var thermalCache: String? = null
+    @Volatile private var thermalCacheAt = 0L
+
     fun readSnapshot(): String = buildString {
         fun block(key: String, value: String) { append("@@").append(key).append('\n').append(value).append('\n') }
         val present = read("/sys/devices/system/cpu/present")
@@ -40,12 +45,19 @@ class HardwareSnapshotReader {
         block("THERMAL", readThermals())
     }
 
-    fun readThermals(): String = buildString {
-        val zones = File("/sys/class/thermal").listFiles()?.filter { it.name.matches(Regex("thermal_zone\\d+")) }.orEmpty()
-        for (zone in zones) {
-            val name = read("${zone.path}/type")
-            val value = read("${zone.path}/temp")
-            if (name.isNotBlank() && value.isNotBlank()) append(name).append(' ').append(value).append('\n')
+    fun readThermals(): String {
+        val now = System.nanoTime() / 1_000_000L
+        thermalCache?.takeIf { now - thermalCacheAt < 2_000L }?.let { return it }
+        val value = buildString {
+            val zones = File("/sys/class/thermal").listFiles()?.filter { it.name.matches(Regex("thermal_zone\\d+")) }.orEmpty()
+            for (zone in zones) {
+                val name = read("${zone.path}/type")
+                val temp = read("${zone.path}/temp")
+                if (name.isNotBlank() && temp.isNotBlank()) append(name).append(' ').append(temp).append('\n')
+            }
         }
+        thermalCache = value
+        thermalCacheAt = now
+        return value
     }
 }

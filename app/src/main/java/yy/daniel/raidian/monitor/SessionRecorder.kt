@@ -12,12 +12,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToLong
 
 /**
  * 会话记录器:驱动 [MonitorSampler] 周期性采样,把每次采样写进 CSV,
@@ -41,6 +41,8 @@ class SessionRecorder(
         private const val TAG = "SessionRecorder"
         /** 默认采样间隔:500ms,即约 2 点/秒 */
         private const val DEFAULT_INTERVAL_MS = 500L
+        /** 温区明细 JSON 写入间隔；曲线只用标量温度，明细主要用于诊断。 */
+        private const val THERMAL_JSON_INTERVAL_MS = 30_000L
     }
 
     // ---- 对外状态(界面可观察) ----
@@ -59,6 +61,7 @@ class SessionRecorder(
 
     /** 采样周期 ms(可调;写进 session.json 以便日后回放校准时间轴) */
     @Volatile var intervalMs: Long = DEFAULT_INTERVAL_MS
+        private set
 
     // ---- 指定应用记录(门控目标,跨 Activity 共享 + 持久化) ----
 
@@ -101,6 +104,13 @@ class SessionRecorder(
     private var generation = 0L
     private var recordedSamples = 0
 
+    /** 温区 JSON 的缓存：明细变化慢，没必要每 500ms 重新序列化 38 个对象。 */
+    private var lastThermalJson = "[]"
+    private var lastThermalJsonAt = 0L
+
+    /** 帧统计（排序/百分位）刷新间隔；每 500ms 对不断增长的列表排序太浪费。 */
+    private var lastStatsAt = 0L
+
     /** 采集协程作用域:独立于任何 Activity/ViewModel,Dispatchers.Default 跑 IO 混合任务 */
     private val scope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + Dispatchers.Default
@@ -136,9 +146,13 @@ class SessionRecorder(
     @Synchronized
     fun start(targetPkg: String, targetLabel: String, watchPkg: String? = null) {
         if (_running.value) return
+        intervalMs = SamplingPrefs.read(context)
         stopFlag = false
         val token = ++generation
         recordedSamples = 0
+        lastThermalJson = "[]"
+        lastThermalJsonAt = 0L
+        lastStatsAt = 0L
         gatePkg = watchPkg?.takeIf { it.isNotBlank() } ?: _watchTarget.value?.pkg
         _paused.value = false
         recentFps.clear()
@@ -178,6 +192,7 @@ class SessionRecorder(
         writeMeta(meta)
         _running.value = true
         MonitorService.start(context)
+        notifyBackgroundPolicy()
         job = scope.launch { loop(token) }
     }
 
@@ -216,39 +231,50 @@ class SessionRecorder(
         _running.value = false
         _paused.value = false
         MonitorService.stopIfIdle(context)
+        notifyBackgroundPolicy()
     }
 
-    /** 采样主循环:按 intervalMs 节奏采样 → 统计 → 写 CSV;每 50ms 醒一次检查节奏 */
+    /** 记录开始/结束会改变前后台策略；组件可能早于策略初始化，失败不影响记录。 */
+    private fun notifyBackgroundPolicy() {
+        try {
+            yy.daniel.raidian.RaidianApp.get(context).backgroundPolicy.onWorkChanged()
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * 采样主循环:按 intervalMs 节奏采样 → 统计 → 写 CSV。
+     *
+     * 旧实现每 50ms 醒一次检查时间，记录期间每秒 20 次无意义唤醒；现在按“距下次采样”
+     * 直接 delay，通常每 500ms 醒一次。门控目标检测有 shell 开销，单独降到 2s 一次；
+     * 暂停时同样只按 2s 节拍醒来检查前台，不做任何采样或写盘。
+     */
     private suspend fun loop(token: Long) {
-        // 门控时每次采样前后台检测的间隔(前台识别有 shell 开销,不用 50ms 查)
-        val gateCheckEvery = intervalMs.coerceAtLeast(200L)
+        val gateCheckEvery = intervalMs.coerceAtLeast(2_000L)
         var lastGateCheck = 0L
         while (!stopFlag) {
             currentCoroutineContext().ensureActive()
+            val wp = gatePkg
             val now = SystemClock.elapsedRealtime()
 
             // ---- 门控检测:指定了目标应用时,前台不在目标 → 暂停 ----
-            val wp = gatePkg
-            if (wp != null) {
-                if (now - lastGateCheck >= gateCheckEvery) {
-                    lastGateCheck = now
-                    val (front, _) = try {
-                        appState.readFrontApp()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        "" to ""
-                    }
-                    val inTarget = front == wp
-                    if (!inTarget) {
-                        // 目标不在前台:暂停采样(不写 CSV),等下一轮再查
-                        _paused.value = true
-                        lastSampleAt = 0L // 复位节奏:恢复后立即采一点
-                        kotlinx.coroutines.delay(gateCheckEvery)
-                        continue
-                    } else if (_paused.value) {
-                        _paused.value = false
-                    }
+            if (wp != null && (lastGateCheck == 0L || now - lastGateCheck >= gateCheckEvery)) {
+                lastGateCheck = now
+                val (front, _) = try {
+                    appState.readFrontApp()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    "" to ""
+                }
+                if (front != wp) {
+                    // 目标不在前台:暂停采样(不写 CSV),等下一个门控节拍再查
+                    _paused.value = true
+                    lastSampleAt = 0L // 复位节奏:恢复后立即采一点
+                    kotlinx.coroutines.delay(gateCheckEvery)
+                    continue
+                } else if (_paused.value) {
+                    _paused.value = false
                 }
             }
 
@@ -258,7 +284,7 @@ class SessionRecorder(
                 lastSampleAt = now
                 val elapsed = now - startElapsed
                 try {
-                    val s = sampler.sample(elapsed)
+                    val s = sampler.sample(elapsed, maxCacheAgeMs = minOf(400L, intervalMs / 2))
                     currentCoroutineContext().ensureActive()
                     synchronized(this) {
                         if (generation != token || !_running.value || (wp != null && s.frontPkg != wp)) return@synchronized
@@ -275,7 +301,13 @@ class SessionRecorder(
                             if (s.maxCpuTemp > 0) { cpuTempSum += s.maxCpuTemp; cpuTempCount++ }
                         }
                         appendCsv(s)
-                        updateStats()
+                        // 1% Low 需要把不断增长的帧率列表排序；每 5s 更新一次足够，
+                        // 不必在每个 500ms 采样点都做一次全量排序。
+                        val statsNow = SystemClock.elapsedRealtime()
+                        if (lastStatsAt == 0L || statsNow - lastStatsAt >= 5_000L) {
+                            lastStatsAt = statsNow
+                            updateStats()
+                        }
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -284,7 +316,15 @@ class SessionRecorder(
                     Log.w(TAG, "sample failed", e)
                 }
             }
-            kotlinx.coroutines.delay(50)
+
+            // 按下一个采样点/门控检查点计算等待时间，不再固定 50ms 轮询。
+            val after = SystemClock.elapsedRealtime()
+            val sampleWait = if (lastSampleAt == 0L) 0L else
+                (lastSampleAt + intervalMs - after).coerceAtLeast(0L)
+            val gateWait = if (wp != null && lastGateCheck != 0L)
+                (lastGateCheck + gateCheckEvery - after).coerceAtLeast(0L) else Long.MAX_VALUE
+            val wait = minOf(sampleWait, gateWait).coerceAtLeast(50L)
+            kotlinx.coroutines.delay(wait)
         }
     }
 
@@ -298,7 +338,15 @@ class SessionRecorder(
                     w.write(s.toCsvHeader(csvCoreCount!!))
                     w.newLine()
                 }
-                w.write(s.toCsvRow(csvCoreCount!!))
+                // 温区明细 30s 刷新一次；其余行复用上一份 JSON，避免每行序列化 38 个对象。
+                val now = SystemClock.elapsedRealtime()
+                if (s.thermalReadings.isNotEmpty() &&
+                    (lastThermalJson == "[]" || now - lastThermalJsonAt >= THERMAL_JSON_INTERVAL_MS)) {
+                    lastThermalJson = Json.encodeToString(s.thermalReadings)
+                    lastThermalJsonAt = now
+                }
+                val thermalJson = if (s.thermalReadings.isEmpty()) "[]" else lastThermalJson
+                w.write(s.toCsvRow(csvCoreCount!!, thermalJson))
                 w.newLine()
                 w.flush() // 保证崩溃时数据不丢
                 recordedSamples++
