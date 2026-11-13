@@ -65,12 +65,12 @@ class MonitorSampler(
     /** 上次采样里 sysfs 温区是否为空，后台刷新据此决定要不要再读 Thermal HAL。 */
     @Volatile private var needThermalHal = true
 
-    suspend fun sample(elapsedMs: Long): Sample = withContext(Dispatchers.IO) {
+    suspend fun sample(elapsedMs: Long, maxCacheAgeMs: Long = 400L): Sample = withContext(Dispatchers.IO) {
         mutex.withLock {
             val now = SystemClock.elapsedRealtime()
             val identity = exec.identity
             val privileged = exec.privileged
-            cached?.takeIf { now - sampledAt < 400 && identity == lastIdentity }?.let {
+            cached?.takeIf { now - sampledAt < maxCacheAgeMs && identity == lastIdentity }?.let {
                 return@withLock it.copy(elapsedMs = elapsedMs)
             }
             if (identity != lastIdentity) previousCpu = emptyMap()

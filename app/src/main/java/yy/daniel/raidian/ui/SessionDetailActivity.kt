@@ -20,6 +20,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -71,6 +73,17 @@ private fun SessionDetailScreen(
 ) {
     val context = LocalContext.current
     val detail by vm.sessionDetail.collectAsState()
+    val loading by vm.sessionLoading.collectAsState()
+    val exporting by vm.exporting.collectAsState()
+    val exportMessage by vm.exportMessage.collectAsState()
+    val htmlLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/html")) { uri ->
+        if (uri != null && dirPath != null) vm.exportSession(File(dirPath), uri, true)
+    }
+    val csvLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null && dirPath != null) vm.exportSession(File(dirPath), uri, false)
+    }
 
     // 进入页面:加载该会话详情(目录无效时显示"无法读取")
     LaunchedEffect(dirPath) {
@@ -86,6 +99,34 @@ private fun SessionDetailScreen(
                 SessionDetailContent(
                     detail = detail,
                     contentPadding = padding,
+                    loading = loading,
+                    exportContent = {
+                        HyperCard {
+                            Text("导出报告", fontSize = 17.sp)
+                            Spacer(Modifier.height(8.dp))
+                            Text("HTML 包含统计和曲线，可离线查看。CSV 保留全部原始采样列，可用 Excel 等表格软件打开。", fontSize = 14.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                            Spacer(Modifier.height(16.dp))
+                            val name = "Raidian_${dirPath?.let { File(it).name }.orEmpty()}"
+                            androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(),
+                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                                top.yukonga.miuix.kmp.basic.Button(onClick = { htmlLauncher.launch("$name.html") }, enabled = !exporting,
+                                    colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColorsPrimary(), modifier = Modifier.weight(1f),
+                                    insideMargin = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
+                                    Text("导出 HTML", maxLines = 1)
+                                }
+                                top.yukonga.miuix.kmp.basic.Button(onClick = { csvLauncher.launch("$name.csv") }, enabled = !exporting,
+                                    colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColorsPrimary(), modifier = Modifier.weight(1f),
+                                    insideMargin = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
+                                    Text("导出 CSV", maxLines = 1)
+                                }
+                            }
+                            if (exporting || exportMessage != null) {
+                                Spacer(Modifier.height(12.dp))
+                                Text(if (exporting) "正在导出，请稍候" else exportMessage.orEmpty(), fontSize = 14.sp)
+                            }
+                        }
+                    },
                     modifier = Modifier.widthIn(max = 720.dp).fillMaxSize(),
                 )
             }
@@ -101,33 +142,28 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
         else -> null
     }
 
-// ==================== 会话详情内容(可复用) ====================
 
-/**
- * 会话详情内容:元数据信息卡(时间/时长/帧率统计/均值)+ 四条曲线
- * (帧率/功耗/电池温度/核心温度)。数据来自 detail(openSession 加载)。
- *
- * 手机和平板均通过 SessionDetailActivity 全屏打开。
- */
+/** Each chart is its own lazy item; parsing and preparing all series happens off the UI thread. */
 @Composable
 fun SessionDetailContent(
     detail: MainViewModel.SessionDetail?,
     contentPadding: PaddingValues = PaddingValues(),
     modifier: Modifier = Modifier,
+    loading: Boolean = false,
+    exportContent: @Composable () -> Unit = {},
 ) {
-    Column(
-        modifier = modifier
-            .verticalScroll(rememberScrollState())
-            .padding(contentPadding),
-    ) {
+    val charts by androidx.compose.runtime.produceState<List<ChartDocument>>(emptyList(), detail) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            detail?.let(::sessionCharts).orEmpty()
+        }
+    }
+    androidx.compose.foundation.lazy.LazyColumn(modifier = modifier.padding(contentPadding),
+        contentPadding = PaddingValues(bottom = 20.dp)) {
         if (detail == null) {
-            Text(
-                "无法读取该会话",
-                fontSize = 14.sp,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-            )
+            item { Text(if (loading) "正在加载会话" else "无法读取该会话", fontSize = 14.sp,
+                modifier = Modifier.padding(16.dp)) }
         } else {
+            item(key = "summary") {
             val meta = detail.meta
             val target = meta.targetLabel.takeIf { it.isNotBlank() } ?: meta.targetPkg
             val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
@@ -140,6 +176,7 @@ fun SessionDetailContent(
             HyperCard {
                 InfoRow("时间", time)
                 InfoRow("时长", durStr)
+                if (meta.intervalMs > 0) InfoRow("采样间隔", "${meta.intervalMs} 毫秒")
                 if (meta.recordedSamples >= 0) InfoRow("记录点数", meta.recordedSamples.toString())
                 meta.fpsStats.takeIf { it.sampleCount > 0 }?.let { fps ->
                     InfoRow("帧率统计", String.format(
@@ -161,70 +198,68 @@ fun SessionDetailContent(
                 }
             }
 
-            // 曲线区(各曲线独立判断;无有效点的不画)
-            SectionHeader("曲线")
-            androidx.compose.runtime.CompositionLocalProvider(LocalChartContext provides ChartContext(
-                elapsedMs = detail.elapsed, breakBefore = detail.breakBefore,
-                source = "会话记录 · $target",
-                corePolicies = detail.corePolicies, coreMaxMhz = detail.coreMaxMhz,
-            )) {
-            HyperCard {
-                Text("点击曲线查看详情", fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                Spacer(Modifier.height(12.dp))
-                // x 轴时间标签(整条曲线共用 detail.elapsed)
-                val xl = timeAxisLabels(detail.elapsed)
-                // 每核频率曲线(多序列叠加;有任一核数据才显示)
-                if (detail.perCoreFreq.isNotEmpty() && detail.perCoreFreq.any { it.any { v -> v >= 0f } }) {
-                    DetailMultiChart("CPU 核心频率（MHz）", detail.perCoreFreq, xl)
-                    Spacer(Modifier.height(10.dp))
-                }
-                // GPU 占用曲线
-                if (detail.perCoreLoad.any { series -> series.any { it >= 0 } }) {
-                    DetailMultiChart("CPU 每核占用（%）", detail.perCoreLoad, xl)
-                    Spacer(Modifier.height(10.dp))
-                }
-                if (detail.perCoreTemp.any { series -> series.any { it >= 0 } }) {
-                    DetailMultiChart("CPU 独立温度传感器（℃）", detail.perCoreTemp, xl)
-                    Spacer(Modifier.height(10.dp))
-                }
-                val extraLabels = mapOf("gpu_temp_c" to "GPU 温度（℃）", "npu_temp_c" to "NPU 温度（℃）",
-                    "skin_temp_c" to "机身温度（℃）", "thermal_status" to "系统热状态（0～6）",
-                    "available_mem_mb" to "可用内存（MB）", "swap_used_mb" to "交换区已用（MB）")
-                detail.extraSeries.forEach { (key, values) ->
-                    if (values.any { it >= 0 }) {
-                        DetailChart(extraLabels.getValue(key), sampleSeries(values), 0f, null,
-                            if (key.contains("temp")) ChartColors.GpuTemp else ChartColors.Memory, xl)
-                        Spacer(Modifier.height(10.dp))
-                    }
-                }
-                if (detail.gpuLoad.any { it >= 0f }) {
-                    DetailChart("GPU 占用（%）", sampleSeries(detail.gpuLoad), 0f, 100f, ChartColors.Gpu, xl)
-                    Spacer(Modifier.height(10.dp))
-                }
-                var drewAny = detail.perCoreFreq.isNotEmpty() || detail.gpuLoad.any { it >= 0f }
-                if (detail.fps.isNotEmpty() && detail.fps.any { it >= 0f }) {
-                    DetailChart("帧率（FPS）", sampleSeries(detail.fps), 0f, maxOf(120f, detail.fps.maxOrNull() ?: 0f), ChartColors.Fps, xl)
-                    Spacer(Modifier.height(10.dp)); drewAny = true
-                }
-                if (detail.power.any { it > 0f }) {
-                    DetailChart("电池功率（mW）", sampleSeries(detail.power), 0f, null, ChartColors.Power, xl)
-                    Spacer(Modifier.height(10.dp)); drewAny = true
-                }
-                if (detail.batteryTemp.any { it >= 0f }) {
-                    DetailChart("电池温度（°C）", sampleSeries(detail.batteryTemp), 0f, null, ChartColors.BatteryTemp, xl)
-                    Spacer(Modifier.height(10.dp)); drewAny = true
-                }
-                if (detail.cpuTemp.any { it >= 0f }) {
-                    DetailChart("核心温度（°C）", sampleSeries(detail.cpuTemp), 0f, null, ChartColors.CpuTemp, xl)
-                    Spacer(Modifier.height(10.dp)); drewAny = true
-                }
-                if (!drewAny) {
-                    Text("本会话暂无有效曲线数据", fontSize = 13.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                }
+
             }
+            item(key = "export") { exportContent() }
+            item(key = "heading") {
+                SectionHeader("曲线")
+                Text("点击曲线查看原始采样点。概览按显示宽度保留峰谷，原始数据不变。", fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+            items(charts.size, key = { charts[it].title }) { index ->
+                val document = charts[index]
+                HyperCard {
+                    Text(document.title, fontSize = 14.sp)
+                    Spacer(Modifier.height(8.dp))
+                    ChartPreview(document) {
+                        if (document.series.size == 1) {
+                            LineChart(document.series.first().values, color = Color(document.series.first().colorArgb),
+                                minY = document.minY, maxY = document.maxY, elapsedMs = document.elapsedMs,
+                                breakBefore = document.breakBefore, xLabels = chartTimeLabels(document.elapsedMs),
+                                modifier = Modifier.fillMaxWidth().height(160.dp))
+                        } else {
+                            MultiLineChart(document.series.map { it.name to it.values },
+                                colors = document.series.map { Color(it.colorArgb) }, minY = document.minY, maxY = document.maxY,
+                                elapsedMs = document.elapsedMs, breakBefore = document.breakBefore,
+                                xLabels = chartTimeLabels(document.elapsedMs), modifier = Modifier.fillMaxWidth().height(180.dp))
+                        }
+                    }
+                    if (document.series.size > 1) Text(document.series.joinToString("　") { it.name }, fontSize = 12.sp)
+                }
             }
         }
-        Spacer(Modifier.height(20.dp))
+    }
+}
+
+/** Shared full-resolution chart documents for the report screen and offline HTML export. */
+fun sessionCharts(detail: MainViewModel.SessionDetail): List<ChartDocument> = buildList {
+    val source = "会话记录 · ${detail.meta.targetLabel.ifBlank { detail.meta.targetPkg }}"
+    fun multi(title: String, cores: List<List<Float>>) {
+        if (cores.none { values -> values.any { it.isFinite() && it >= 0 } }) return
+        val palette = ChartColors.corePalette(cores.size)
+        add(ChartDocument(title, chartUnit(title), cores.mapIndexed { core, values ->
+            ChartSeriesData("CPU $core", sampleSeries(values), palette[core].toArgb(), core,
+                detail.corePolicies.getOrNull(core) ?: -1, detail.coreMaxMhz.getOrNull(core) ?: -1)
+        }, detail.elapsed, detail.breakBefore, minY = 0f, source = source))
+    }
+    fun single(title: String, values: List<Float>, color: Color, max: Float? = null) {
+        if (values.none { it.isFinite() && it >= 0 }) return
+        add(ChartDocument(title, chartUnit(title), listOf(ChartSeriesData(title, sampleSeries(values), color.toArgb())),
+            detail.elapsed, detail.breakBefore, minY = 0f, maxY = max, source = source))
+    }
+    multi("CPU 核心频率（MHz）", detail.perCoreFreq)
+    multi("CPU 每核占用（%）", detail.perCoreLoad)
+    multi("CPU 独立温度传感器（℃）", detail.perCoreTemp)
+    single("CPU 占用（%）", detail.cpuLoad, ChartColors.CpuTemp, 100f)
+    single("GPU 占用（%）", detail.gpuLoad, ChartColors.Gpu, 100f)
+    single("帧率（FPS）", detail.fps, ChartColors.Fps, maxOf(120f, detail.fps.maxOrNull() ?: 0f))
+    single("电池功率（mW）", detail.power, ChartColors.Power)
+    single("电池温度（℃）", detail.batteryTemp, ChartColors.BatteryTemp)
+    single("核心温度（℃）", detail.cpuTemp, ChartColors.CpuTemp)
+    val labels = mapOf("gpu_temp_c" to "GPU 温度（℃）", "npu_temp_c" to "NPU 温度（℃）",
+        "skin_temp_c" to "机身温度（℃）", "thermal_status" to "系统热状态（0～6）",
+        "available_mem_mb" to "可用内存（MB）", "swap_used_mb" to "交换区已用（MB）")
+    detail.extraSeries.forEach { (key, values) ->
+        single(labels[key] ?: key, values, if (key.contains("temp")) ChartColors.GpuTemp else ChartColors.Memory)
     }
 }

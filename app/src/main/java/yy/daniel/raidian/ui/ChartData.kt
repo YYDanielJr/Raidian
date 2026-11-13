@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 @Serializable
 data class ChartSeriesData(
@@ -32,13 +33,22 @@ data class ChartDocument(
 data class ChartStats(val count: Int, val missing: Int, val min: Float?, val max: Float?, val average: Double?)
 
 fun chartStats(values: List<Float?>): ChartStats {
-    val valid = values.filterNotNull().filter { it.isFinite() }
-    return ChartStats(valid.size, values.size - valid.size, valid.minOrNull(), valid.maxOrNull(),
-        valid.takeIf { it.isNotEmpty() }?.map { it.toDouble() }?.average())
+    var count = 0
+    var sum = 0.0
+    var min = Float.POSITIVE_INFINITY
+    var max = Float.NEGATIVE_INFINITY
+    for (value in values) if (value != null && value.isFinite()) {
+        count++
+        sum += value
+        min = minOf(min, value)
+        max = maxOf(max, value)
+    }
+    return ChartStats(count, values.size - count, min.takeIf { count > 0 }, max.takeIf { count > 0 },
+        if (count > 0) sum / count else null)
 }
 
 fun validChartTimeline(times: List<Long>, count: Int): Boolean =
-    count > 0 && times.size == count && times.zipWithNext().all { (a, b) -> b >= a }
+    count > 0 && times.size == count && (1 until times.size).all { times[it] >= times[it - 1] }
 
 fun chartFraction(index: Int, count: Int, times: List<Long>): Float =
     if (times.size == count && times.size > 1 && times.last() > times.first())
@@ -50,7 +60,7 @@ fun nearestChartIndex(fraction: Float, count: Int, times: List<Long>): Int? {
     if (count <= 0) return null
     val f = fraction.coerceIn(0f, 1f)
     if (times.size != count || times.last() <= times.first()) return (f * (count - 1)).roundToInt()
-    val target = times.first() + ((times.last() - times.first()) * f.toDouble()).toLong()
+    val target = times.first() + ((times.last() - times.first()) * f.toDouble()).roundToLong()
     val hit = times.binarySearch(target)
     if (hit >= 0) return hit
     val right = (-hit - 1).coerceAtMost(count - 1)

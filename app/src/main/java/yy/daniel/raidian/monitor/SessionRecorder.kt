@@ -61,6 +61,7 @@ class SessionRecorder(
 
     /** 采样周期 ms(可调;写进 session.json 以便日后回放校准时间轴) */
     @Volatile var intervalMs: Long = DEFAULT_INTERVAL_MS
+        private set
 
     // ---- 指定应用记录(门控目标,跨 Activity 共享 + 持久化) ----
 
@@ -145,6 +146,7 @@ class SessionRecorder(
     @Synchronized
     fun start(targetPkg: String, targetLabel: String, watchPkg: String? = null) {
         if (_running.value) return
+        intervalMs = SamplingPrefs.read(context)
         stopFlag = false
         val token = ++generation
         recordedSamples = 0
@@ -282,7 +284,7 @@ class SessionRecorder(
                 lastSampleAt = now
                 val elapsed = now - startElapsed
                 try {
-                    val s = sampler.sample(elapsed)
+                    val s = sampler.sample(elapsed, maxCacheAgeMs = minOf(400L, intervalMs / 2))
                     currentCoroutineContext().ensureActive()
                     synchronized(this) {
                         if (generation != token || !_running.value || (wp != null && s.frontPkg != wp)) return@synchronized
